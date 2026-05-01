@@ -427,7 +427,7 @@
       </teleport>
 
       <!-- 上传文件：选好后手动确认 -->
-      <div v-if="showUpload" class="modal-bg modal-bg-centered" @click.self="showUpload=false;stagedFiles=[];uploadDone=false;uploadProgress=[]">
+      <div v-if="showUpload" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showUpload=false;stagedFiles=[];uploadDone=false;uploadProgress=[]})"
         <div class="modal modal-md">
           <h3>{{ t.upload }}</h3>
           <div class="upload-area" @click="$refs.fileInput.click()" @dragover.prevent @drop.prevent="dropUploadStage">
@@ -456,7 +456,7 @@
       </div>
 
       <!-- 上传文件夹：同样需要手动确认 -->
-      <div v-if="showFolderUpload" class="modal-bg modal-bg-centered" @click.self="showFolderUpload=false">
+      <div v-if="showFolderUpload" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showFolderUpload=false})"
         <div class="modal modal-md">
           <h3>{{ t.uploadFolder }}</h3>
           <div class="upload-area" @click="$refs.folderInput.click()" @dragover.prevent @drop.prevent="dropFolderStage">
@@ -501,7 +501,7 @@
       </div>
 
       <!-- 新建文件夹 -->
-      <div v-if="showMkdir" class="modal-bg modal-bg-centered" @click.self="showMkdir=false">
+      <div v-if="showMkdir" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showMkdir=false})"
         <div class="modal modal-md">
           <h3>{{ t.newFolder }}</h3>
           <div class="field"><label>{{ t.folderName }}</label><input v-model="newDirName" type="text" @keyup.enter="doMkdir" autofocus /></div>
@@ -513,7 +513,7 @@
       </div>
 
       <!-- 新建文件：只输入文件名，创建后跳转编辑页 -->
-      <div v-if="showCreate" class="modal-bg modal-bg-centered" @click.self="showCreate=false">
+      <div v-if="showCreate" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showCreate=false})"
         <div class="modal modal-md">
           <h3>{{ t.createFileTitle }}</h3>
           <div class="field"><label>{{ t.fileName }}</label><input ref="createFileInput" v-model="newFile.name" type="text" @keyup.enter="doCreateFile" autofocus /></div>
@@ -528,7 +528,7 @@
       <!-- 编辑/预览文件：已改为独立页面 /edit/... -->
 
       <!-- 权限 -->
-      <div v-if="showChmod" class="modal-bg modal-bg-centered" @click.self="showChmod=false">
+      <div v-if="showChmod" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showChmod=false})"
         <div class="modal modal-md">
           <h3>{{ t.permTitle }}: <span class="edit-filename">{{ chmodTarget?.name }}</span></h3>
           <div class="perm-grid">
@@ -560,7 +560,7 @@
       </div>
 
       <!-- 重命名弹窗 -->
-      <div v-if="showRename" class="modal-bg modal-bg-centered rename-modal-bg" @click.self="showRename=false">
+      <div v-if="showRename" class="modal-bg modal-bg-centered rename-modal-bg" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showRename=false})"
         <div class="modal rename-modal">
           <h3>{{ t.rename }}</h3>
           <div class="rename-input-wrap">
@@ -583,7 +583,7 @@
       </div>
 
       <!-- 解压确认 -->
-      <div v-if="extractTarget" class="modal-bg modal-bg-centered" @click.self="extractTarget=null">
+      <div v-if="extractTarget" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{extractTarget=null})"
         <div class="modal modal-sm">
           <h3>{{ lang==='zh'?'确认解压':'Confirm Extract' }}</h3>
           <p class="modal-desc">{{ lang==='zh'?`将解压 "${extractTarget?.name}" 到当前目录`:`Extract "${extractTarget?.name}" to current folder?` }}</p>
@@ -598,7 +598,7 @@
       </div>
 
       <!-- 单个删除确认 -->
-      <div v-if="deleteTarget" class="modal-bg modal-bg-centered" @click.self="deleteTarget=null">
+      <div v-if="deleteTarget" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{deleteTarget=null})"
         <div class="modal modal-sm">
           <h3>{{ t.confirmDelete }}</h3>
           <p class="modal-desc">{{ t.deleteWarning }}</p>
@@ -610,7 +610,7 @@
       </div>
 
       <!-- 文件信息弹窗 -->
-      <div v-if="infoTarget" class="modal-bg modal-bg-centered" @click.self="infoTarget=null">
+      <div v-if="infoTarget" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{infoTarget=null})"
         <div class="modal modal-md info-modal">
           <div class="info-modal-header">
             <div class="info-modal-icon" :class="infoTarget.is_dir ? 'folder-icon' : getExt(infoTarget.name)">
@@ -689,7 +689,7 @@
       </div>
 
       <!-- 批量删除确认 -->
-      <div v-if="showBatchDelete" class="modal-bg modal-bg-centered" @click.self="showBatchDelete=false">
+      <div v-if="showBatchDelete" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showBatchDelete=false})"
         <div class="modal modal-sm">
           <h3>{{ t.confirmBatchDelete }}</h3>
           <p class="modal-desc">{{ batchDeleteWarningText }}</p>
@@ -701,7 +701,7 @@
       </div>
 
       <!-- 分享 -->
-      <div v-if="showShareModal" class="modal-bg modal-bg-centered" @click.self="showShareModal=false;shareResult=null">
+      <div v-if="showShareModal" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showShareModal=false;shareResult=null})"
         <div class="modal modal-sm">
           <h3>{{ t.shareTitle }}</h3>
           <!-- 第一步：尚未创建分享 -->
@@ -732,7 +732,7 @@
       </div>
 
       <!-- 公开/私有 二次确认弹窗 -->
-      <div v-if="showVisibilityConfirm" class="modal-bg modal-bg-centered" @click.self="showVisibilityConfirm=false">
+      <div v-if="showVisibilityConfirm" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showVisibilityConfirm=false})"
         <div class="modal modal-sm">
           <h3>{{ visibilityTarget?.is_public ? t.confirmSetPrivate : t.confirmSetPublic }}</h3>
           <p class="modal-desc" style="margin-bottom:6px">
@@ -761,7 +761,7 @@
       </div>
 
             <!-- 目录选择弹窗（移动 & 复制 共用） -->
-      <div v-if="showDirModal" class="modal-bg modal-bg-fullscreen" @click.self="showDirModal=false">
+      <div v-if="showDirModal" class="modal-bg modal-bg-fullscreen" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showDirModal=false})"
         <div class="modal modal-move">
           <div class="modal-titlebar">
             <h3>{{ dirModalMode==='move' ? t.moveTitle : t.copyTitle }}</h3>
@@ -812,7 +812,7 @@
       </div>
 
       <!-- 压缩弹窗 -->
-      <div v-if="showCompress" class="modal-bg modal-bg-centered" @click.self="showCompress=false">
+      <div v-if="showCompress" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showCompress=false})"
         <div class="modal modal-md">
           <h3>{{ t.compressTitle }}</h3>
           <div class="field">
@@ -844,7 +844,7 @@
       </div>
 
       <!-- 搜索弹窗 -->
-      <div v-if="showSearch" class="modal-bg modal-bg-centered" @click.self="showSearch=false">
+      <div v-if="showSearch" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showSearch=false})"
         <div class="modal modal-md">
           <h3>{{ t.searchTitle }}</h3>
           <div class="field">
@@ -886,7 +886,7 @@
       </div>
 
       <!-- 搜索结果弹窗 -->
-      <div v-if="showSearchResult" class="modal-bg modal-bg-centered" @click.self="showSearchResult=false">
+      <div v-if="showSearchResult" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{showSearchResult=false})"
         <div class="modal modal-md modal-search-result">
           <h3>{{ t.searchResults }}: <span class="search-keyword">{{ searchName }}</span></h3>
           <p class="search-result-scope">{{ t.searchScope }}：<strong>{{ searchUsedDir }}</strong></p>
@@ -920,7 +920,7 @@
       </div>
 
       <!-- 远程获取弹窗 -->
-      <div v-if="showFetch" class="modal-bg modal-bg-centered" @click.self="closeFetch">
+      <div v-if="showFetch" class="modal-bg modal-bg-centered" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{closeFetch()})"
         <div class="modal modal-md">
           <h3>{{ t.fetchTitle }}</h3>
           <div class="field">
@@ -967,6 +967,22 @@ import CodeEditor from '../components/CodeEditor.vue'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
 import { t, currentLang as lang } from '../i18n'
+
+// ── 遮罩层点击关闭（防止拖拽选文字时误关闭） ──────────────────
+// 只有 mousedown 和 mouseup 都落在遮罩层本身（而非弹窗内容区）时才关闭
+let _overlayMousedownTarget = null
+function onOverlayMousedown(e) {
+  _overlayMousedownTarget = e.target
+}
+function onOverlayMouseup(e, closeFn) {
+  if (
+    _overlayMousedownTarget === e.currentTarget &&
+    e.target === e.currentTarget
+  ) {
+    closeFn()
+  }
+  _overlayMousedownTarget = null
+}
 
 // ── 状态 ──────────────────────────────────────────
 const showSettings = ref(false)
