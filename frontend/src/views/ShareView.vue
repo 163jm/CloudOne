@@ -1,271 +1,242 @@
 <template>
-  <Layout>
-    <div class="page-container">
-
-      <!-- 桌面端头部 -->
-      <div class="page-header desktop-header">
-        <h2 class="page-title">{{ t.shared }}</h2>
-        <div style="display:flex;gap:6px">
-          <button class="btn-settings" @click="showSettings=true" :title="t.settings">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-          </button>
-          <button class="btn-settings" @click="doLogout" :title="t.logout">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-          </button>
-        </div>
-      </div>
-
-      <!-- 移动端头部 -->
-      <div class="page-header mobile-header">
-        <button class="mob-icon-btn" @click="showMobileNav=true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
-        <h2 class="page-title">{{ t.shared }}</h2>
-      </div>
-
-      <!-- 移动端导航抽屉 -->
-      <teleport to="body">
-        <div v-if="showMobileNav" class="mob-drawer-mask" @click="showMobileNav=false">
-          <div class="mob-drawer-panel" @click.stop>
-            <div class="mob-drawer-top">
-              <svg viewBox="0 0 100 100" style="width:26px;height:26px"><defs><linearGradient id="sdlg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#2563EB"/><stop offset="100%" style="stop-color:#38BDF8"/></linearGradient></defs><ellipse cx="50" cy="62" rx="32" ry="18" fill="url(#sdlg)"/><circle cx="36" cy="56" r="16" fill="url(#sdlg)"/><circle cx="58" cy="50" r="20" fill="url(#sdlg)"/><polygon points="50,24 41,42 46,42 46,60 54,60 54,42 59,42" fill="white" opacity="0.95"/></svg>
-              <span class="mob-brand-name">CloudOne</span>
-            </div>
-            <nav class="mob-drawer-nav">
-              <router-link to="/files" class="mob-nav-item" @click="showMobileNav=false">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
-                {{ t.myFiles }}
-              </router-link>
-              <router-link to="/shared" class="mob-nav-item mob-nav-active" @click="showMobileNav=false">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-                {{ t.shared }}
-              </router-link>
-              <router-link to="/public-files" class="mob-nav-item" @click="showMobileNav=false">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-                {{ t.public }}
-              </router-link>
-              <router-link to="/webdav" class="mob-nav-item" @click="showMobileNav=false">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12H3l9-9 9 9h-2"/><path d="M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/><path d="M9 21v-6a2 2 0 012-2h2a2 2 0 012 2v6"/></svg>
-                {{ t.webdav }}
-              </router-link>
-              <div class="mob-nav-divider"></div>
-              <button class="mob-nav-item" @click="showSettings=true;showMobileNav=false">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-                {{ t.settings }}
-              </button>
-              <button class="mob-nav-item mob-nav-logout" @click="doLogout">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                {{ t.logout }}
-              </button>
-            </nav>
-          </div>
-        </div>
-      </teleport>
-
-      <div class="content">
-        <div v-if="!shares.length" class="empty-state">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+  <div class="share-page">
+    <div class="share-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="slg3" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#2563EB"/>
+                <stop offset="100%" style="stop-color:#38BDF8"/>
+              </linearGradient>
+            </defs>
+            <ellipse cx="50" cy="62" rx="32" ry="18" fill="url(#slg3)"/>
+            <circle cx="36" cy="56" r="16" fill="url(#slg3)"/>
+            <circle cx="58" cy="50" r="20" fill="url(#slg3)"/>
+            <polygon points="50,24 41,42 46,42 46,60 54,60 54,42 59,42" fill="white" opacity="0.95"/>
           </svg>
-          <p>{{ t.noShares }}</p>
         </div>
-        <div v-else class="share-list">
-          <div v-for="s in shares" :key="s.id" class="share-card">
-            <div class="share-icon">
-              <svg v-if="s.is_dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            </div>
-            <div class="share-info">
-              <p class="share-path">{{ s.file_path }}</p>
-              <p class="share-date">{{ formatDate(s.created_at) }}</p>
-              <div class="share-meta">
-                <span v-if="s.expires_at" class="meta-tag" :class="isExpired(s) ? 'expired' : 'expiry'">
-                  {{ isExpired(s) ? '已过期' : '过期：' + formatDate(s.expires_at) }}
-                </span>
-                <span v-if="s.max_views > 0" class="meta-tag views">
-                  {{ s.view_count }}/{{ s.max_views }} 次
-                </span>
-              </div>
-              <div class="share-links">
-                <a :href="`/s/${s.code}`" target="_blank" class="share-url">{{ origin }}/s/{{ s.code }}</a>
-              </div>
-            </div>
-            <div class="share-actions">
-              <button class="act-btn" @click="copyLink(s)" :title="t.copyLink">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-              </button>
-              <button class="act-btn danger" @click="confirmCancel(s)" :title="lang==='zh'?'取消分享':'Unshare'">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
-                  <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
-                  <line x1="2" y1="2" x2="22" y2="22"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
+        <span>CloudOne</span>
       </div>
     </div>
 
-    <teleport to="body">
-      <div v-if="cancelTarget" class="modal-bg" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{cancelTarget=null})"
-        <div class="modal">
-          <h3>{{ lang==='zh'?'取消分享':'Unshare' }}</h3>
-          <p class="modal-desc">{{ lang==='zh'?`确定取消分享 "${cancelTarget.file_path}" 吗？`:`Unshare "${cancelTarget.file_path}"?` }}</p>
-          <div class="modal-actions">
-            <button class="btn-ghost" @click="cancelTarget=null">{{ lang==='zh'?'取消':'Cancel' }}</button>
-            <button class="btn-danger" @click="doCancel">{{ lang==='zh'?'确认取消分享':'Confirm' }}</button>
-          </div>
-        </div>
+    <div class="share-content">
+      <div v-if="loading" class="loading-state">
+        <div class="spinner-lg"></div>
       </div>
-      <div v-if="toastMsg" class="toast-tip">{{ toastMsg }}</div>
-    </teleport>
 
-    <SettingsModal v-model="showSettings" />
-  </Layout>
+      <div v-else-if="error" class="error-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        <p>{{ error }}</p>
+      </div>
+
+      <template v-else-if="data">
+        <div class="share-card">
+
+          <!-- 单文件下载视图（直接分享文件 或 从目录点进来的文件） -->
+          <div v-if="fileView" class="share-file">
+            <button v-if="data.is_dir" class="back-btn" @click="fileView = null">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><polyline points="15 18 9 12 15 6"/></svg>
+              返回
+            </button>
+            <div class="file-preview-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </div>
+            <h2>{{ fileView.name }}</h2>
+            <a :href="fileView.downloadUrl" class="download-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              下载
+            </a>
+          </div>
+
+          <!-- 目录视图 -->
+          <div v-else-if="data.is_dir" class="share-dir">
+            <div class="breadcrumb">
+              <button class="crumb-btn" @click="navigateTo(null)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                {{ rootName }}
+              </button>
+              <template v-for="(seg, i) in subPath" :key="i">
+                <span class="crumb-sep">/</span>
+                <button class="crumb-btn" @click="navigateTo(subPath.slice(0, i+1).join('/'))">{{ seg }}</button>
+              </template>
+            </div>
+
+            <div v-if="dirLoading" class="loading-state" style="padding:40px"><div class="spinner-lg"></div></div>
+            <div v-else class="file-list">
+              <div v-if="!currentFiles.length" class="empty-dir">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                <span>空文件夹</span>
+              </div>
+              <div
+                v-for="f in currentFiles" :key="f.path"
+                class="file-item clickable"
+                @click="f.is_dir ? enterDir(f) : openFile(f)"
+              >
+                <svg v-if="f.is_dir" viewBox="0 0 24 24" fill="currentColor" class="ficon folder"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ficon"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span class="fname">{{ f.name }}</span>
+                <span v-if="f.is_dir" class="fdir-arrow">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polyline points="9 18 15 12 9 6"/></svg>
+                </span>
+                <span v-else class="fsize">{{ formatSize(f.size) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 直接分享的单文件 -->
+          <div v-else class="share-file">
+            <div class="file-preview-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </div>
+            <h2>{{ fileName }}</h2>
+            <a :href="`/api/s/${route.params.code}/download`" class="download-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              下载
+            </a>
+          </div>
+
+        </div>
+      </template>
+    </div>
+  </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '../stores/auth'
-import Layout from '../components/Layout.vue'
-import SettingsModal from '../components/SettingsModal.vue'
-import api from '../api'
-import { t, currentLang as lang } from '../i18n'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 
-const showSettings = ref(false)
-const showMobileNav = ref(false)
-const { logout } = useAuthStore()
-const router = useRouter()
-function doLogout() { logout(); router.push('/login') }
+const route = useRoute()
+const data = ref(null)
+const loading = ref(true)
+const error = ref('')
 
-// 遮罩层点击关闭（防止拖拽选文字时误关闭）
-let _overlayMousedownTarget = null
-function onOverlayMousedown(e) { _overlayMousedownTarget = e.target }
-function onOverlayMouseup(e, closeFn) {
-  if (_overlayMousedownTarget === e.currentTarget && e.target === e.currentTarget) closeFn()
-  _overlayMousedownTarget = null
+const subPath = ref([])
+const currentFiles = ref([])
+const dirLoading = ref(false)
+
+// 目录内点击文件后切换到单文件下载视图
+const fileView = ref(null) // { name, downloadUrl }
+
+const rootName = computed(() => {
+  if (!data.value) return ''
+  const p = data.value.file_path || ''
+  return p.split('/').filter(Boolean).pop() || p
+})
+
+const fileName = computed(() => {
+  if (!data.value) return ''
+  const p = data.value.file_path || ''
+  return p.split('/').filter(Boolean).pop() || p
+})
+
+function formatSize(bytes) {
+  if (!bytes) return '0 B'
+  const units = ['B','KB','MB','GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i]
 }
 
-const shares = ref([])
-const cancelTarget = ref(null)
-const origin = location.origin
-const toastMsg = ref('')
-let toastTimer = null
+// 目录内点击文件，切换到下载视图
+function openFile(f) {
+  const sp = [...subPath.value, f.name].join('/')
+  fileView.value = {
+    name: f.name,
+    downloadUrl: `/api/s/${route.params.code}/download?subpath=${encodeURIComponent(sp)}`
+  }
+}
 
-function showToast(msg) {
-  toastMsg.value = msg
-  clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 2500)
+async function enterDir(f) {
+  subPath.value = [...subPath.value, f.name]
+  await loadDir()
 }
-async function load() {
-  const { data } = await api.get('/share')
-  shares.value = data || []
+
+async function navigateTo(relPath) {
+  subPath.value = relPath ? relPath.split('/').filter(Boolean) : []
+  await loadDir()
 }
-function confirmCancel(s) { cancelTarget.value = s }
-async function doCancel() {
-  await api.delete(`/share/${cancelTarget.value.id}`)
-  cancelTarget.value = null; load()
+
+async function loadDir() {
+  dirLoading.value = true
+  try {
+    const sp = subPath.value.join('/')
+    const url = sp
+      ? `/api/s/${route.params.code}?subpath=${encodeURIComponent(sp)}`
+      : `/api/s/${route.params.code}`
+    const res = await fetch(url)
+    if (!res.ok) throw new Error()
+    const json = await res.json()
+    currentFiles.value = json.files || []
+  } catch {
+    currentFiles.value = []
+  }
+  dirLoading.value = false
 }
-async function copyLink(s) {
-  copyText(`${origin}/s/${s.code}`)
-  showToast(lang.value === 'zh' ? '链接已复制到剪切板' : 'Link copied to clipboard')
-}
-function copyText(text) {
-  if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).catch(() => fallbackCopy(text)) }
-  else { fallbackCopy(text) }
-}
-function fallbackCopy(text) {
-  const el = document.createElement('textarea')
-  el.value = text; el.style.cssText = 'position:fixed;top:-9999px;left:-9999px'
-  document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el)
-}
-function isExpired(s) {
-  return s.expires_at && new Date(s.expires_at) < new Date()
-}
-function formatDate(d) {
-  return new Date(d).toLocaleDateString(lang.value === 'zh' ? 'zh-CN' : 'en-US', { year:'numeric', month:'short', day:'numeric' })
-}
-onMounted(load)
+
+onMounted(async () => {
+  try {
+    const res = await fetch(`/api/s/${route.params.code}`)
+    if (!res.ok) throw new Error('Not found')
+    data.value = await res.json()
+    if (data.value.is_dir) {
+      currentFiles.value = data.value.files || []
+    }
+  } catch {
+    error.value = 'Share link not found or expired.'
+  }
+  loading.value = false
+})
 </script>
 
 <style scoped>
-.page-container { flex: 1; display: flex; flex-direction: column; }
-.page-header { padding: 20px 28px 16px; border-bottom: 1px solid var(--gray-100); background: white; display: flex; align-items: center; justify-content: space-between; }
-.page-title { font-size: 20px; font-weight: 700; color: var(--gray-800); margin: 0; }
-.content { flex: 1; padding: 24px 28px; overflow: auto; }
+.share-page { min-height: 100vh; background: var(--gray-50); }
+.share-header { padding: 20px 32px; background: white; border-bottom: 1px solid var(--gray-100); box-shadow: var(--shadow-sm); }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-icon { width: 36px; height: 36px; }
+.brand span { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #2563EB, #38BDF8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.share-content { max-width: 640px; margin: 48px auto; padding: 0 20px; }
+.loading-state { display: flex; justify-content: center; padding: 80px; }
+.spinner-lg { width: 32px; height: 32px; border: 3px solid var(--gray-200); border-top-color: var(--blue-500); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-state { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 80px 0; color: var(--gray-300); }
+.error-state svg { width: 64px; height: 64px; }
+.error-state p { font-size: 16px; color: var(--gray-400); }
+.share-card { background: white; border-radius: 20px; padding: 32px 40px 40px; box-shadow: var(--shadow); border: 1px solid var(--gray-100); }
+.breadcrumb { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--gray-100); }
+.crumb-btn { display: flex; align-items: center; gap: 4px; background: none; border: none; color: var(--blue-600); font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer; padding: 3px 7px; border-radius: 6px; transition: background .15s; }
+.crumb-btn:hover { background: var(--blue-50); }
+.crumb-sep { color: var(--gray-300); font-size: 13px; }
+.file-list { display: flex; flex-direction: column; gap: 2px; }
+.file-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; transition: background .15s; }
+.file-item.clickable { cursor: pointer; }
+.file-item.clickable:hover { background: var(--blue-50); }
+.ficon { width: 18px; height: 18px; flex-shrink: 0; color: var(--gray-400); }
+.ficon.folder { color: #F59E0B; }
+.fname { flex: 1; font-size: 14px; color: var(--gray-700); }
+.fsize { font-size: 12px; color: var(--gray-400); }
+.fdir-arrow { color: var(--gray-300); display: flex; align-items: center; }
+.empty-dir { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px; color: var(--gray-300); }
+.empty-dir svg { width: 40px; height: 40px; }
+.empty-dir span { font-size: 13px; color: var(--gray-400); }
+.share-file { text-align: center; }
+.back-btn { display: flex; align-items: center; gap: 5px; background: none; border: none; color: var(--blue-600); font-size: 13px; font-family: inherit; cursor: pointer; padding: 4px 8px; border-radius: 6px; margin-bottom: 24px; transition: background .15s; }
+.back-btn:hover { background: var(--blue-50); }
+.file-preview-icon { width: 80px; height: 80px; background: var(--blue-50); border-radius: 20px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: var(--blue-500); }
+.file-preview-icon svg { width: 40px; height: 40px; }
+.share-file h2 { font-size: 22px; font-weight: 600; color: var(--gray-800); margin-bottom: 24px; }
+.download-btn { display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; background: var(--primary-gradient); color: white; border-radius: var(--radius); text-decoration: none; font-size: 15px; font-weight: 600; box-shadow: var(--primary-shadow); transition: var(--transition); }
+.download-btn svg { width: 18px; height: 18px; }
+.download-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(37,99,235,0.35); }
 
-.desktop-header { display: flex; }
-.mobile-header  { display: none; }
-
-.btn-settings { width: 36px; height: 36px; border: 1.5px solid var(--gray-200); border-radius: var(--radius-sm); background: white; display: flex; align-items: center; justify-content: center; color: var(--gray-500); cursor: pointer; transition: var(--transition); }
-.btn-settings svg { width: 17px; height: 17px; }
-.btn-settings:hover { border-color: var(--blue-400); color: var(--blue-600); background: var(--blue-50); }
-
-.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; color: var(--gray-300); gap: 12px; }
-.empty-state svg { width: 64px; height: 64px; }
-.empty-state p { font-size: 16px; font-weight: 500; color: var(--gray-400); }
-
-.share-list { display: flex; flex-direction: column; gap: 12px; }
-.share-card { display: flex; align-items: center; gap: 16px; background: white; border: 1px solid var(--gray-100); border-radius: var(--radius); padding: 16px 20px; transition: var(--transition); box-shadow: var(--shadow-sm); }
-.share-card:hover { box-shadow: var(--shadow); border-color: var(--gray-200); }
-.share-icon { width: 40px; height: 40px; border-radius: 10px; background: var(--blue-50); color: var(--blue-500); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.share-icon svg { width: 20px; height: 20px; }
-.share-info { flex: 1; min-width: 0; }
-.share-path { font-size: 14px; font-weight: 600; color: var(--gray-700); margin-bottom: 4px; }
-.share-date { font-size: 12px; color: var(--gray-400); margin-bottom: 6px; }
-.share-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
-.meta-tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
-.meta-tag.expiry { background: #EFF6FF; color: #2563EB; }
-.meta-tag.expired { background: #FEF2F2; color: #EF4444; }
-.meta-tag.views { background: #F0FDF4; color: #16A34A; }
-.share-url { font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--blue-500); text-decoration: none; background: var(--blue-50); padding: 3px 8px; border-radius: 6px; }
-.share-actions { display: flex; gap: 4px; }
-.act-btn { width: 34px; height: 34px; border: none; background: var(--gray-50); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--gray-400); transition: var(--transition); }
-.act-btn svg { width: 15px; height: 15px; }
-.act-btn:hover { background: var(--blue-50); color: var(--blue-600); }
-.act-btn.danger:hover { background: rgba(239,68,68,0.1); color: #EF4444; }
-
-.modal-bg { position: fixed; inset: 0; background: rgba(15,23,42,.45); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: white; border-radius: 20px; padding: 32px; width: 400px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,.15); animation: modalIn .2s cubic-bezier(.4,0,.2,1); }
-@keyframes modalIn { from{opacity:0;transform:scale(.95) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
-.modal h3 { font-size: 18px; font-weight: 600; color: var(--gray-800); margin-bottom: 12px; }
-.modal-desc { font-size: 14px; color: var(--gray-500); margin-bottom: 24px; }
-.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
-.btn-ghost { padding: 9px 18px; border: 1.5px solid var(--gray-200); border-radius: var(--radius-sm); background: transparent; color: var(--gray-600); font-size: 14px; font-weight: 500; font-family: inherit; cursor: pointer; }
-.btn-ghost:hover { background: var(--gray-50); }
-.btn-danger { padding: 9px 18px; background: #EF4444; color: white; border: none; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer; }
-
-/* 移动端汉堡 */
-.mob-icon-btn { width: 38px; height: 38px; border: none; background: none; color: var(--gray-600); display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; flex-shrink: 0; }
-.mob-icon-btn svg { width: 22px; height: 22px; }
-.mob-icon-btn:active { background: var(--gray-100); }
-
-/* 抽屉 */
-.mob-drawer-mask { position: fixed; inset: 0; background: rgba(15,23,42,.4); backdrop-filter: blur(2px); z-index: 200; display: flex; }
-.mob-drawer-panel { width: 260px; max-width: 80vw; height: 100%; background: white; display: flex; flex-direction: column; box-shadow: 4px 0 24px rgba(15,23,42,.15); animation: slideInLeft .2s ease; }
-@keyframes slideInLeft { from{transform:translateX(-100%)} to{transform:translateX(0)} }
-.mob-drawer-top { padding: 24px 20px 16px; border-bottom: 1px solid var(--gray-100); display: flex; align-items: center; gap: 10px; }
-.mob-brand-name { font-size: 18px; font-weight: 700; background: linear-gradient(135deg,#2563EB,#38BDF8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.mob-drawer-nav { flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
-.mob-nav-item { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 10px; text-decoration: none; font-size: 15px; font-weight: 500; color: var(--gray-600); border: none; background: none; font-family: inherit; cursor: pointer; transition: background .15s, color .15s; text-align: left; width: 100%; }
-.mob-nav-item svg { width: 20px; height: 20px; flex-shrink: 0; }
-.mob-nav-item:hover, .mob-nav-item:active { background: var(--blue-50); color: var(--blue-600); }
-.mob-nav-active { background: var(--blue-50); color: var(--blue-600); font-weight: 600; }
-.mob-nav-logout { color: #EF4444; }
-.mob-nav-logout:hover { background: rgba(239,68,68,.08) !important; color: #EF4444 !important; }
-.mob-nav-divider { height: 1px; background: var(--gray-100); margin: 8px 4px; }
-
-@media (max-width: 768px) {
-  .desktop-header { display: none; }
-  .mobile-header  { display: flex; padding: 10px 14px; min-height: 52px; gap: 10px; }
-  .content { padding: 16px; }
-  .share-card { padding: 14px 16px; gap: 12px; }
-  .share-path { font-size: 13px; }
-  .share-url { font-size: 11px; word-break: break-all; white-space: normal; }
-  .modal { width: 100% !important; max-width: 100% !important; border-radius: 20px 20px 0 0 !important; padding: 24px 20px 36px !important; }
-  .modal-bg { align-items: flex-end; }
+@media (max-width: 600px) {
+  .share-header { padding: 14px 20px; }
+  .share-content { margin: 24px auto; padding: 0 14px; }
+  .share-card { padding: 24px 20px 28px; border-radius: 16px; }
+  .share-file h2 { font-size: 17px; word-break: break-all; }
+  .download-btn { width: 100%; justify-content: center; padding: 16px; font-size: 16px; border-radius: 14px; }
+  .file-preview-icon { width: 64px; height: 64px; border-radius: 16px; }
+  .file-preview-icon svg { width: 32px; height: 32px; }
+  .file-item { padding: 12px 10px; }
+  .fname { font-size: 13px; }
 }
 </style>
