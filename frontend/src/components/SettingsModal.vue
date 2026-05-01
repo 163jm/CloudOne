@@ -1,6 +1,6 @@
 <template>
   <teleport to="body">
-    <div v-if="modelValue" class="modal-bg" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>$emit('update:modelValue',false))"
+    <div v-if="modelValue" class="modal-bg" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>$emit('update:modelValue',false))">
       <div class="settings-modal">
         <!-- Header -->
         <div class="sm-header">
