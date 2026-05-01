@@ -109,7 +109,7 @@
     </div>
 
     <teleport to="body">
-      <div v-if="cancelTarget" class="modal-bg" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{cancelTarget=null})"
+      <div v-if="cancelTarget" class="modal-bg" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{cancelTarget=null})">
         <div class="modal">
           <h3>{{ lang==='zh'?'取消分享':'Unshare' }}</h3>
           <p class="modal-desc">{{ lang==='zh'?`确定取消分享 "${cancelTarget.file_path}" 吗？`:`Unshare "${cancelTarget.file_path}"?` }}</p>
