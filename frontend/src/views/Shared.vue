@@ -109,7 +109,7 @@
     </div>
 
     <teleport to="body">
-      <div v-if="cancelTarget" class="modal-bg" @click.self="cancelTarget=null">
+      <div v-if="cancelTarget" class="modal-bg" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>{cancelTarget=null})"
         <div class="modal">
           <h3>{{ lang==='zh'?'取消分享':'Unshare' }}</h3>
           <p class="modal-desc">{{ lang==='zh'?`确定取消分享 "${cancelTarget.file_path}" 吗？`:`Unshare "${cancelTarget.file_path}"?` }}</p>
@@ -140,6 +140,14 @@ const showMobileNav = ref(false)
 const { logout } = useAuthStore()
 const router = useRouter()
 function doLogout() { logout(); router.push('/login') }
+
+// 遮罩层点击关闭（防止拖拽选文字时误关闭）
+let _overlayMousedownTarget = null
+function onOverlayMousedown(e) { _overlayMousedownTarget = e.target }
+function onOverlayMouseup(e, closeFn) {
+  if (_overlayMousedownTarget === e.currentTarget && e.target === e.currentTarget) closeFn()
+  _overlayMousedownTarget = null
+}
 
 const shares = ref([])
 const cancelTarget = ref(null)
