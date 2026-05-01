@@ -1,6 +1,6 @@
 <template>
   <teleport to="body">
-    <div v-if="modelValue" class="modal-bg" @click.self="$emit('update:modelValue', false)">
+    <div v-if="modelValue" class="modal-bg" @mousedown="onOverlayMousedown" @mouseup="e=>onOverlayMouseup(e,()=>$emit('update:modelValue',false))"
       <div class="settings-modal">
         <!-- Header -->
         <div class="sm-header">
@@ -226,6 +226,14 @@ import { useAuthStore } from '../stores/auth'
 const props = defineProps({ modelValue: Boolean })
 const emit = defineEmits(['update:modelValue', 'storage-changed'])
 const auth = useAuthStore()
+
+// 遮罩层点击关闭（防止拖拽选文字时误关闭）
+let _overlayMousedownTarget = null
+function onOverlayMousedown(e) { _overlayMousedownTarget = e.target }
+function onOverlayMouseup(e, closeFn) {
+  if (_overlayMousedownTarget === e.currentTarget && e.target === e.currentTarget) closeFn()
+  _overlayMousedownTarget = null
+}
 
 // User form
 const userForm = ref({ username: '', password: '' })
