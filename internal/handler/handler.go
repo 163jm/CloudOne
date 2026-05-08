@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -18,13 +17,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cloudone/cloudone/internal/auth"
 	"github.com/cloudone/cloudone/internal/config"
 	"github.com/cloudone/cloudone/internal/files"
-	sshpkg "github.com/cloudone/cloudone/internal/ssh"
+	"github.com/cloudone/cloudone/internal/terminal"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
@@ -1988,211 +1986,21 @@ func (h *Handler) DetectFileType(c *gin.Context) {
 	c.JSON(200, gin.H{"text": true, "mime": mimeType})
 }
 
-// ── SSH Settings ──────────────────────────────────────────────────────────────
+// ── Terminal WebSocket (PTY, no SSH) ─────────────────────────────────────────
 
-func (h *Handler) GetSSHSettings(c *gin.Context) {
-	var s auth.Settings
-	h.db.First(&s)
-	c.JSON(200, gin.H{
-		"ssh_host":          s.SSHHost,
-		"ssh_port":          s.SSHPort,
-		"ssh_user":          s.SSHUser,
-		"ssh_auth_type":     s.SSHAuthType,
-		"ssh_has_password":  s.SSHPasswordEnc != "",
-		"ssh_has_key":       s.SSHPrivateKeyEnc != "",
-	})
-}
-
-func (h *Handler) UpdateSSHSettings(c *gin.Context) {
-	var s auth.Settings
-	h.db.First(&s)
-	var req struct {
-		Host       string `json:"ssh_host"`
-		Port       int    `json:"ssh_port"`
-		User       string `json:"ssh_user"`
-		AuthType   string `json:"ssh_auth_type"`
-		Password   string `json:"ssh_password"`    // 空字符串=不修改
-		PrivateKey string `json:"ssh_private_key"` // 空字符串=不修改
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if req.Host != "" {
-		s.SSHHost = req.Host
-	}
-	if req.Port > 0 {
-		s.SSHPort = req.Port
-	}
-	if req.User != "" {
-		s.SSHUser = req.User
-	}
-	if req.AuthType == "password" || req.AuthType == "key" {
-		s.SSHAuthType = req.AuthType
-	}
-	if req.Password != "" {
-		if err := s.SetSSHPassword(req.Password); err != nil {
-			c.JSON(500, gin.H{"error": "failed to encrypt password"})
-			return
-		}
-	}
-	if req.PrivateKey != "" {
-		if err := s.SetSSHPrivateKey(req.PrivateKey); err != nil {
-			c.JSON(500, gin.H{"error": "failed to encrypt private key"})
-			return
-		}
-	}
-	h.db.Save(&s)
-	c.JSON(200, gin.H{
-		"ssh_host":         s.SSHHost,
-		"ssh_port":         s.SSHPort,
-		"ssh_user":         s.SSHUser,
-		"ssh_auth_type":    s.SSHAuthType,
-		"ssh_has_password": s.SSHPasswordEnc != "",
-		"ssh_has_key":      s.SSHPrivateKeyEnc != "",
-	})
-}
-
-// ── SSH WebSocket ─────────────────────────────────────────────────────────────
-
-var sshWSUpgrader = websocket.Upgrader{
+var termWSUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-type sshWSMessage struct {
-	Type string `json:"type"`
-	Data string `json:"data,omitempty"`
-	Rows uint32 `json:"rows,omitempty"`
-	Cols uint32 `json:"cols,omitempty"`
-}
-
-// SSHWebSocket 根据设置中保存的配置建立 SSH WebSocket 隧道
-func (h *Handler) SSHWebSocket(c *gin.Context) {
-	conn, err := sshWSUpgrader.Upgrade(c.Writer, c.Request, nil)
+// TerminalWebSocket spawns a local PTY shell and bridges it to the WebSocket.
+// No SSH configuration is needed — the shell runs as the current OS user.
+func (h *Handler) TerminalWebSocket(c *gin.Context) {
+	conn, err := termWSUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-
-	wsMu := &sync.Mutex{}
-	wsSend := func(v interface{}) {
-		wsMu.Lock()
-		defer wsMu.Unlock()
-		conn.WriteJSON(v)
-	}
-
-	// 读取 SSH 配置
-	var s auth.Settings
-	h.db.First(&s)
-
-	host := s.SSHHost
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	port := s.SSHPort
-	if port == 0 {
-		port = 22
-	}
-	user := s.SSHUser
-	if user == "" {
-		wsSend(gin.H{"type": "error", "data": "SSH 用户名未配置，请先在设置中填写"})
-		return
-	}
-
-	cfg := sshpkg.Config{
-		Host:     host,
-		Port:     port,
-		Username: user,
-	}
-
-	authType := s.SSHAuthType
-	if authType == "" {
-		authType = "password"
-	}
-
-	if authType == "key" {
-		keyStr, err := s.GetSSHPrivateKey()
-		if err != nil || keyStr == "" {
-			wsSend(gin.H{"type": "error", "data": "SSH 私钥未配置或解密失败，请先在设置中填写"})
-			return
-		}
-		cfg.PrivateKey = []byte(keyStr)
-	} else {
-		pwd, err := s.GetSSHPassword()
-		if err != nil || pwd == "" {
-			wsSend(gin.H{"type": "error", "data": "SSH 密码未配置或解密失败，请先在设置中填写"})
-			return
-		}
-		cfg.Password = pwd
-	}
-
-	sshSession, err := sshpkg.Connect(cfg)
-	if err != nil {
-		wsSend(gin.H{"type": "error", "data": err.Error()})
-		return
-	}
-	defer sshSession.Close()
-
-	wsSend(gin.H{"type": "connected"})
-
-	outCh := make(chan []byte, 128)
-	errCh := make(chan error, 2)
-	sshSession.ReadLoop(outCh, errCh)
-
-	type rawMsg struct {
-		data []byte
-		err  error
-	}
-	wsMsgCh := make(chan rawMsg, 32)
-	go func() {
-		for {
-			_, raw, err := conn.ReadMessage()
-			wsMsgCh <- rawMsg{data: raw, err: err}
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	for {
-		select {
-		case data, ok := <-outCh:
-			if !ok {
-				return
-			}
-			wsSend(gin.H{"type": "output", "data": string(data)})
-
-		case sshErr := <-errCh:
-			if sshErr != nil {
-				wsSend(gin.H{"type": "error", "data": sshErr.Error()})
-			} else {
-				wsSend(gin.H{"type": "closed"})
-			}
-			return
-
-		case wsm := <-wsMsgCh:
-			if wsm.err != nil {
-				return
-			}
-			var msg sshWSMessage
-			if err := json.Unmarshal(wsm.data, &msg); err != nil {
-				continue
-			}
-			switch msg.Type {
-			case "input":
-				sshSession.Write([]byte(msg.Data))
-			case "resize":
-				rows, cols := msg.Rows, msg.Cols
-				if rows == 0 {
-					rows = 24
-				}
-				if cols == 0 {
-					cols = 80
-				}
-				sshSession.Resize(rows, cols)
-			}
-		}
-	}
+	terminal.Handle(conn)
 }

@@ -66,10 +66,10 @@
             </div>
           </div>
           <div class="header-divider"></div>
-          <!-- SSH 按钮 -->
+          <!-- 终端按钮 -->
           <button class="btn-action btn-ssh" @click="openSSH">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="6 8 10 12 6 16"/><line x1="13" y1="16" x2="17" y2="16"/></svg>
-            SSH
+            {{ lang === 'zh' ? '终端' : 'Terminal' }}
           </button>
           <button class="btn-settings" @click="showSettings = true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
@@ -212,7 +212,7 @@
             <div class="mob-act-divider"></div>
             <button class="mob-act-item mob-act-ssh" @click="openSSH();showMobileActions=false">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="6 8 10 12 6 16"/><line x1="13" y1="16" x2="17" y2="16"/></svg>
-              SSH
+              {{ lang === 'zh' ? '终端' : 'Terminal' }}
             </button>
           </div>
           <!-- 选择模式菜单 -->
@@ -379,7 +379,7 @@
 
       <!-- ===== 所有弹窗 ===== -->
 
-      <!-- SSH 全屏终端 -->
+      <!-- WebSocket 终端 -->
       <teleport to="body">
         <div v-if="showSSH" class="ssh-overlay">
           <div class="ssh-modal">
@@ -390,7 +390,7 @@
                 <div class="ssh-dot ssh-dot-green"></div>
                 <span class="ssh-title">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="6 8 10 12 6 16"/><line x1="13" y1="16" x2="17" y2="16"/></svg>
-                  SSH — {{ sshInfo.user || 'user' }}@{{ sshInfo.host || '127.0.0.1' }}:{{ sshInfo.port || 22 }}
+                  {{ lang === 'zh' ? '终端' : 'Terminal' }} — WebSocket
                 </span>
               </div>
               <button class="ssh-close" @click="closeSSH">
@@ -405,9 +405,6 @@
               </span>
               <button v-if="sshStatus==='error'||sshStatus==='closed'" class="ssh-reconnect" @click="openSSH">
                 {{ lang==='zh'?'重新连接':'Reconnect' }}
-              </button>
-              <button v-if="sshStatus==='error'" class="ssh-reconnect ssh-to-settings" @click="closeSSH(); showSettings=true">
-                {{ lang==='zh'?'去设置':'Settings' }}
               </button>
             </div>
             <div ref="sshTermEl" class="ssh-term"></div>
@@ -1058,7 +1055,6 @@ const createDropRef = ref(null)
 const showSSH = ref(false)
 const sshStatus = ref('connecting') // connecting | connected | error | closed
 const sshError = ref('')
-const sshInfo = ref({ host: '127.0.0.1', port: 22, user: '' })
 const sshTermEl = ref(null)
 let sshWS = null
 let sshTerm = null
@@ -1933,31 +1929,9 @@ function onDocClick(e) {
   if (createDropRef.value && !createDropRef.value.contains(e.target)) showCreateDrop.value = false
 }
 
-// ── SSH ──────────────────────────────────────────────────────────────────────
+// ── 终端 (WebSocket PTY) ──────────────────────────────────────────────────────
 
 async function openSSH() {
-  // 先读取 SSH 配置，检查是否已配置
-  try {
-    const res = await api.get('/ssh/settings')
-    const d = res.data
-    // 必须有用户名，且有密码或私钥
-    const hasAuth = (d.ssh_auth_type === 'key' && d.ssh_has_key) ||
-                    (d.ssh_auth_type !== 'key' && d.ssh_has_password)
-    if (!d.ssh_user || !hasAuth) {
-      // 未配置 → 提示去设置
-      sshInfo.value = { host: d.ssh_host || '127.0.0.1', port: d.ssh_port || 22, user: d.ssh_user || '' }
-      showSSH.value = true
-      sshStatus.value = 'error'
-      sshError.value = lang.value === 'zh'
-        ? 'SSH 未配置，请先在「设置 → SSH 连接」中填写连接信息'
-        : 'SSH not configured. Please fill in Settings → SSH Connection first.'
-      return
-    }
-    sshInfo.value = { host: d.ssh_host || '127.0.0.1', port: d.ssh_port || 22, user: d.ssh_user }
-  } catch(e) {
-    sshInfo.value = { host: '127.0.0.1', port: 22, user: '' }
-  }
-
   showSSH.value = true
   sshStatus.value = 'connecting'
   sshError.value = ''
@@ -2001,7 +1975,7 @@ async function openSSH() {
   // 建立 WebSocket
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   const token = localStorage.getItem('token')
-  sshWS = new WebSocket(`${proto}://${location.host}/api/ws/ssh?token=${encodeURIComponent(token)}`)
+  sshWS = new WebSocket(`${proto}://${location.host}/api/ws/terminal?token=${encodeURIComponent(token)}`)
 
   sshWS.onmessage = (e) => {
     const msg = JSON.parse(e.data)
