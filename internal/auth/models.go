@@ -16,18 +16,14 @@ import (
 )
 
 // ── 加密工具 ──────────────────────────────────────────────────────────────────
-// 所有敏感字段（WebDAV 密码哈希、JWT Secret）均使用 AES-256-GCM 加密后
-// 以 base64 字符串存入数据库，解密密钥由启动时传入的 masterKey 派生。
 
-var masterKey []byte // 32 字节，由 main.go 在启动时调用 SetMasterKey 设置
+var masterKey []byte
 
-// SetMasterKey 接收任意长度字符串，SHA-256 派生为 32 字节密钥
 func SetMasterKey(key string) {
 	h := sha256.Sum256([]byte(key))
 	masterKey = h[:]
 }
 
-// Encrypt 使用 AES-256-GCM 加密明文，返回 base64 编码的密文
 func Encrypt(plaintext string) (string, error) {
 	if len(masterKey) == 0 {
 		return "", errors.New("master key not set")
@@ -48,7 +44,6 @@ func Encrypt(plaintext string) (string, error) {
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// Decrypt 解密 Encrypt 产生的 base64 密文
 func Decrypt(encoded string) (string, error) {
 	if len(masterKey) == 0 {
 		return "", errors.New("master key not set")
@@ -78,45 +73,33 @@ func Decrypt(encoded string) (string, error) {
 
 // ── 数据模型 ──────────────────────────────────────────────────────────────────
 
-// User 存储账户信息。Password 字段存 bcrypt 哈希（非敏感，bcrypt 本身不可逆）。
 type User struct {
 	ID           uint      `gorm:"primarykey" json:"id"`
 	Username     string    `gorm:"uniqueIndex" json:"username"`
-	Password     string    `json:"-"` // bcrypt hash，不通过 API 暴露
-	TokenVersion int       `json:"-"` // 密码修改时递增，使旧 token 立即失效
+	Password     string    `json:"-"`
+	TokenVersion int       `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// Settings 系统设置。
+// Settings 系统设置（SSH 字段已于迁移中移除）。
 // JWTSecretEnc      — AES-GCM 加密的 JWT 签名密钥（base64）
 // WebDAVPasswordEnc — AES-GCM 加密的 WebDAV 独立密码 bcrypt 哈希（base64）
-// WebDAVUsername    — 非敏感，明文存储
-// SSHPasswordEnc    — AES-GCM 加密的 SSH 密码（base64）
-// SSHPrivateKeyEnc  — AES-GCM 加密的 SSH 私钥（base64）
 type Settings struct {
-	ID               uint   `gorm:"primarykey"`
-	StorageDir       string `json:"storage_dir"`
-	Lang             string `json:"lang"`
-	UITheme          string `json:"ui_theme"`
-	UIFont           string `json:"ui_font"`
-	EditorFont       string `json:"editor_font"`
-	WebDAVEnabled    bool   `json:"webdav_enabled"`
-	WebDAVSubPath    string `json:"webdav_sub_path"`
-	WebDAVUsername   string `json:"webdav_username"`
-	WebDAVPasswordEnc string `json:"-"` // AES-GCM(bcrypt(password))，不暴露
-	JWTSecretEnc     string `json:"-"` // AES-GCM(jwt_secret)，不暴露
-	ShowHidden       bool   `json:"show_hidden"`
-	// SSH 连接配置（非敏感字段明文，敏感字段加密）
-	SSHHost         string `json:"ssh_host"`
-	SSHPort         int    `json:"ssh_port"`
-	SSHUser         string `json:"ssh_user"`
-	SSHAuthType     string `json:"ssh_auth_type"` // "password" | "key"
-	SSHPasswordEnc  string `json:"-"`             // AES-GCM(password)
-	SSHPrivateKeyEnc string `json:"-"`             // AES-GCM(private_key)
+	ID                uint   `gorm:"primarykey"`
+	StorageDir        string `json:"storage_dir"`
+	Lang              string `json:"lang"`
+	UITheme           string `json:"ui_theme"`
+	UIFont            string `json:"ui_font"`
+	EditorFont        string `json:"editor_font"`
+	WebDAVEnabled     bool   `json:"webdav_enabled"`
+	WebDAVSubPath     string `json:"webdav_sub_path"`
+	WebDAVUsername    string `json:"webdav_username"`
+	WebDAVPasswordEnc string `json:"-"` // AES-GCM(bcrypt(password))
+	JWTSecretEnc      string `json:"-"` // AES-GCM(jwt_secret)
+	ShowHidden        bool   `json:"show_hidden"`
 }
 
-// GetJWTSecret 解密并返回 JWT 密钥明文
 func (s *Settings) GetJWTSecret() (string, error) {
 	if s.JWTSecretEnc == "" {
 		return "", nil
@@ -124,7 +107,6 @@ func (s *Settings) GetJWTSecret() (string, error) {
 	return Decrypt(s.JWTSecretEnc)
 }
 
-// SetJWTSecret 加密并存储 JWT 密钥
 func (s *Settings) SetJWTSecret(secret string) error {
 	enc, err := Encrypt(secret)
 	if err != nil {
@@ -134,7 +116,6 @@ func (s *Settings) SetJWTSecret(secret string) error {
 	return nil
 }
 
-// GetWebDAVPasswordHash 解密并返回 WebDAV 密码的 bcrypt 哈希
 func (s *Settings) GetWebDAVPasswordHash() (string, error) {
 	if s.WebDAVPasswordEnc == "" {
 		return "", nil
@@ -142,7 +123,6 @@ func (s *Settings) GetWebDAVPasswordHash() (string, error) {
 	return Decrypt(s.WebDAVPasswordEnc)
 }
 
-// SetWebDAVPasswordHash 加密并存储 WebDAV 密码的 bcrypt 哈希
 func (s *Settings) SetWebDAVPasswordHash(bcryptHash string) error {
 	if bcryptHash == "" {
 		s.WebDAVPasswordEnc = ""
@@ -156,64 +136,18 @@ func (s *Settings) SetWebDAVPasswordHash(bcryptHash string) error {
 	return nil
 }
 
-// GetSSHPassword 解密并返回 SSH 密码明文
-func (s *Settings) GetSSHPassword() (string, error) {
-	if s.SSHPasswordEnc == "" {
-		return "", nil
-	}
-	return Decrypt(s.SSHPasswordEnc)
-}
-
-// SetSSHPassword 加密并存储 SSH 密码
-func (s *Settings) SetSSHPassword(password string) error {
-	if password == "" {
-		s.SSHPasswordEnc = ""
-		return nil
-	}
-	enc, err := Encrypt(password)
-	if err != nil {
-		return err
-	}
-	s.SSHPasswordEnc = enc
-	return nil
-}
-
-// GetSSHPrivateKey 解密并返回 SSH 私钥明文
-func (s *Settings) GetSSHPrivateKey() (string, error) {
-	if s.SSHPrivateKeyEnc == "" {
-		return "", nil
-	}
-	return Decrypt(s.SSHPrivateKeyEnc)
-}
-
-// SetSSHPrivateKey 加密并存储 SSH 私钥
-func (s *Settings) SetSSHPrivateKey(key string) error {
-	if key == "" {
-		s.SSHPrivateKeyEnc = ""
-		return nil
-	}
-	enc, err := Encrypt(key)
-	if err != nil {
-		return err
-	}
-	s.SSHPrivateKeyEnc = enc
-	return nil
-}
-
-// ShareLink 分享链接，增加过期时间和访问次数限制
 type ShareLink struct {
 	ID        uint       `gorm:"primarykey" json:"id"`
 	Code      string     `gorm:"uniqueIndex" json:"code"`
 	FilePath  string     `json:"file_path"`
 	IsDir     bool       `json:"is_dir"`
 	UserID    uint       `json:"user_id"`
-	ExpiresAt *time.Time `json:"expires_at"` // nil = 永不过期
-	MaxViews  int        `json:"max_views"`  // 0 = 不限次数
+	ExpiresAt *time.Time `json:"expires_at"`
+	MaxViews  int        `json:"max_views"`
 	ViewCount int        `json:"view_count"`
 	CreatedAt time.Time  `json:"created_at"`
 }
 
-// FileVisibility 文件可见性记录
 type FileVisibility struct {
 	ID       uint   `gorm:"primarykey"`
 	FilePath string `gorm:"uniqueIndex" json:"file_path"`
@@ -229,6 +163,11 @@ func InitDB(path string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// 数据库迁移：移除旧 SSH 列（SQLite 不支持 DROP COLUMN，用重建表方式）
+	migrateDropSSHColumns(db)
+
+	// 正常 AutoMigrate（添加新列、创建新表）
 	db.AutoMigrate(&User{}, &Settings{}, &ShareLink{}, &FileVisibility{})
 
 	var count int64
@@ -238,4 +177,67 @@ func InitDB(path string) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+// migrateDropSSHColumns 检测 settings 表是否含有旧 SSH 列，
+// 若存在则通过重建表的方式将其移除。
+// SQLite 从 3.35.0 才支持 DROP COLUMN，为保证兼容性使用重建方式。
+func migrateDropSSHColumns(db *gorm.DB) {
+	// 检查是否存在任意一个 SSH 列，有则执行迁移
+	type colInfo struct {
+		Name string
+	}
+	var cols []colInfo
+	db.Raw("PRAGMA table_info(settings)").Scan(&cols)
+
+	hasSSH := false
+	sshCols := map[string]bool{
+		"ssh_host": true, "ssh_port": true, "ssh_user": true,
+		"ssh_auth_type": true, "ssh_password_enc": true, "ssh_private_key_enc": true,
+	}
+	for _, c := range cols {
+		if sshCols[c.Name] {
+			hasSSH = true
+			break
+		}
+	}
+	if !hasSSH {
+		return // 已经是干净的，无需迁移
+	}
+
+	// 在事务内重建 settings 表，只保留当前 Settings 结构体对应的列
+	db.Exec(`
+		BEGIN;
+
+		CREATE TABLE IF NOT EXISTS settings_new (
+			id                  INTEGER PRIMARY KEY,
+			storage_dir         TEXT,
+			lang                TEXT,
+			ui_theme            TEXT,
+			ui_font             TEXT,
+			editor_font         TEXT,
+			web_dav_enabled     BOOLEAN,
+			web_dav_sub_path    TEXT,
+			web_dav_username    TEXT,
+			web_dav_password_enc TEXT,
+			jwt_secret_enc      TEXT,
+			show_hidden         BOOLEAN
+		);
+
+		INSERT INTO settings_new (
+			id, storage_dir, lang, ui_theme, ui_font, editor_font,
+			web_dav_enabled, web_dav_sub_path, web_dav_username,
+			web_dav_password_enc, jwt_secret_enc, show_hidden
+		)
+		SELECT
+			id, storage_dir, lang, ui_theme, ui_font, editor_font,
+			web_dav_enabled, web_dav_sub_path, web_dav_username,
+			web_dav_password_enc, jwt_secret_enc, show_hidden
+		FROM settings;
+
+		DROP TABLE settings;
+		ALTER TABLE settings_new RENAME TO settings;
+
+		COMMIT;
+	`)
 }
