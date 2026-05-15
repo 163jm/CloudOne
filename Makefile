@@ -1,38 +1,37 @@
-.PHONY: all build frontend backend clean run
+.PHONY: all build frontend backend clean run build-linux-amd64 build-linux-arm64 dev-frontend
 
-# 默认目标：完整构建
 all: build
 
-# 第一步：构建前端（必须先于后端）
 frontend:
 	@echo ">>> 构建前端..."
 	cd frontend && npm install && npm run build
 	@echo ">>> 前端构建完成"
 
-# 第二步：构建后端（依赖前端 dist）
 backend: frontend
-	@echo ">>> 构建后端..."
-	CGO_ENABLED=1 go build -ldflags="-s -w" -o cloudone .
+	@echo ">>> 构建 Rust 后端..."
+	cargo build --release
+	cp target/release/cloudone ./cloudone
 	@echo ">>> 后端构建完成: ./cloudone"
 
-# 完整构建
 build: backend
 
-# 交叉编译 linux/amd64
 build-linux-amd64: frontend
-	@echo ">>> 交叉编译 linux/amd64..."
-	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o cloudone-linux-amd64 .
+	@echo ">>> 构建 Rust 后端 linux/amd64..."
+	cargo build --release --target x86_64-unknown-linux-gnu
+	cp target/x86_64-unknown-linux-gnu/release/cloudone ./cloudone-linux-amd64
 
-# 清理构建产物
+build-linux-arm64: frontend
+	@echo ">>> 构建 Rust 后端 linux/arm64..."
+	cargo build --release --target aarch64-unknown-linux-gnu
+	cp target/aarch64-unknown-linux-gnu/release/cloudone ./cloudone-linux-arm64
+
 clean:
 	rm -f cloudone cloudone-linux-amd64 cloudone-linux-arm64
-	rm -rf frontend/dist
+	rm -rf target frontend/dist
 	@echo ">>> 清理完成"
 
-# 构建并运行（用于本地开发）
 run: build
 	./cloudone
 
-# 仅运行前端开发服务（热重载）
 dev-frontend:
 	cd frontend && npm run dev
