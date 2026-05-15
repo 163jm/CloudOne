@@ -11,9 +11,9 @@ use std::{
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit},
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
     body::Body,
@@ -24,7 +24,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, post, put},
+    routing::{any, delete, get, post, put},
 };
 use base64::{Engine as _, engine::general_purpose};
 use bcrypt::{DEFAULT_COST, hash, verify};
@@ -406,34 +406,8 @@ fn build_router(state: AppState) -> Router {
         .route("/pub/dl", get(download_public_file))
         .route("/raw/{*path}", get(serve_public_file))
         .route("/s/{code}/raw", get(serve_share_raw))
-        .route(
-            "/dav",
-            get(webdav_handler)
-                .put(webdav_handler)
-                .delete(webdav_handler)
-                .route(Method::OPTIONS, webdav_handler)
-                .route(Method::from_bytes(b"PROPFIND").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"PROPPATCH").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"MKCOL").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"COPY").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"MOVE").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"LOCK").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"UNLOCK").unwrap(), webdav_handler),
-        )
-        .route(
-            "/dav/{*path}",
-            get(webdav_handler)
-                .put(webdav_handler)
-                .delete(webdav_handler)
-                .route(Method::OPTIONS, webdav_handler)
-                .route(Method::from_bytes(b"PROPFIND").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"PROPPATCH").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"MKCOL").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"COPY").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"MOVE").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"LOCK").unwrap(), webdav_handler)
-                .route(Method::from_bytes(b"UNLOCK").unwrap(), webdav_handler),
-        )
+        .route("/dav", any(webdav_handler))
+        .route("/dav/{*path}", any(webdav_handler))
         .fallback(static_fallback)
         .layer(cors)
         .layer(DefaultBodyLimit::max(1024 * 1024 * 1024))
@@ -822,8 +796,8 @@ async fn delete_file(State(state): State<AppState>, Query(q): Query<PathQuery>) 
     };
     let fm = state.files.lock().await.clone();
     match fm.safe_abs_path(&p).and_then(|abs| {
-        std::fs::remove_dir_all(abs)
-            .or_else(|_| std::fs::remove_file(fm.safe_abs_path(&p)?))
+        std::fs::remove_dir_all(&abs)
+            .or_else(|_| std::fs::remove_file(&abs))
             .map_err(Into::into)
     }) {
         Ok(_) => {
@@ -963,7 +937,9 @@ async fn get_file_content(State(state): State<AppState>, Query(q): Query<PathQue
     match fm.safe_abs_path(&p).and_then(|abs| {
         let mut f = std::fs::File::open(abs)?;
         let mut buf = Vec::new();
-        f.by_ref().take(2 * 1024 * 1024).read_to_end(&mut buf)?;
+        std::io::Read::by_ref(&mut f)
+            .take(2 * 1024 * 1024)
+            .read_to_end(&mut buf)?;
         Ok(String::from_utf8_lossy(&buf).to_string())
     }) {
         Ok(c) => ok_json(json!({"content":c})),
@@ -1332,8 +1308,8 @@ async fn list_shares(State(state): State<AppState>, req: Request<Body>) -> Respo
 }
 async fn delete_share(
     State(state): State<AppState>,
-    req: Request<Body>,
     AxPath(id): AxPath<i64>,
+    req: Request<Body>,
 ) -> Response {
     let user = req_user(&req);
     let _ = sqlx::query("DELETE FROM share_links WHERE id=? AND user_id=?")
@@ -1629,7 +1605,7 @@ async fn compress_files(
                 for p in req.paths {
                     let abs = fm.safe_abs_path(&p)?;
                     let rel = abs.strip_prefix(fm.root()).unwrap();
-                    tar.append_path_with_name(abs, rel)?;
+                    tar.append_path_with_name(&abs, rel)?;
                 }
                 tar.finish()?;
             } else {
@@ -1637,7 +1613,7 @@ async fn compress_files(
                 for p in req.paths {
                     let abs = fm.safe_abs_path(&p)?;
                     let rel = abs.strip_prefix(fm.root()).unwrap();
-                    tar.append_path_with_name(abs, rel)?;
+                    tar.append_path_with_name(&abs, rel)?;
                 }
                 tar.finish()?;
             }
@@ -1824,8 +1800,8 @@ async fn update_webdav_settings(
 }
 async fn webdav_handler(
     State(state): State<AppState>,
-    req: Request<Body>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    req: Request<Body>,
 ) -> Response {
     let headers = req.headers().clone();
     let s = get_settings(&state.db).await.unwrap();
@@ -1878,16 +1854,12 @@ async fn webdav_handler(
     if !pass_ok {
         return basic_unauth();
     }
-    let base = state
-        .files
-        .lock()
-        .await
-        .root()
-        .join(if s.webdav_sub_path.is_empty() {
-            "webdav".into()
-        } else {
-            s.webdav_sub_path.trim_start_matches('/').into()
-        });
+    let webdav_sub_path = if s.webdav_sub_path.is_empty() {
+        "webdav"
+    } else {
+        s.webdav_sub_path.trim_start_matches('/')
+    };
+    let base = state.files.lock().await.root().join(webdav_sub_path);
     let _ = fs::create_dir_all(&base).await;
     let path = req.uri().path().trim_start_matches("/dav");
     let abs = base.join(path.trim_start_matches('/'));
@@ -1914,13 +1886,12 @@ async fn webdav_handler(
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
         }
-        "DELETE" => match fs::remove_dir_all(&abs)
-            .await
-            .or_else(|_| async { fs::remove_file(&abs).await })
-            .await
-        {
+        "DELETE" => match fs::remove_dir_all(&abs).await {
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(_) => match fs::remove_file(&abs).await {
+                Ok(_) => StatusCode::NO_CONTENT.into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            },
         },
         "MKCOL" => match fs::create_dir_all(abs).await {
             Ok(_) => StatusCode::CREATED.into_response(),
@@ -2069,13 +2040,14 @@ fn real_ip(headers: &HeaderMap, addr: std::net::SocketAddr) -> String {
         .and_then(|s| s.split(',').next())
         .map(str::trim)
         .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
         .unwrap_or_else(|| {
             headers
                 .get("x-real-ip")
                 .and_then(|v| v.to_str().ok())
-                .unwrap_or(&remote.to_string())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| remote.to_string())
         })
-        .to_string()
 }
 async fn ensure_conf(data: &Path) -> Result<()> {
     let p = data.join("conf.ini");
