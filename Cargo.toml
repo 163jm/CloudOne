@@ -26,6 +26,7 @@ tar = "0.4"
 flate2 = "1"
 walkdir = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 futures-util = "0.3"
 url = "2"
 quick-xml = "0.38"
