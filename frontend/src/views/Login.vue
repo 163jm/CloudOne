@@ -51,6 +51,7 @@
               <span v-if="!loading">{{ t.createAccount }}</span>
               <span v-else class="spinner"></span>
             </button>
+            <p class="switch-link" @click="mode = 'login'">{{ t.alreadyHaveAccount || '已有账户？直接登录' }}</p>
           </form>
         </div>
 
@@ -94,9 +95,14 @@ const error = ref('')
 const loading = ref(false)
 
 onMounted(async () => {
-  const res = await fetch('/api/auth/status')
-  const data = await res.json()
-  if (!data.setup) mode.value = 'setup'
+  try {
+    const res = await fetch('/api/auth/status')
+    if (!res.ok) return
+    const data = await res.json()
+    if (!data.setup) mode.value = 'setup'
+  } catch (e) {
+    // 网络异常时保持 login 模式，不误显示 setup 表单
+  }
 })
 
 async function doLogin() {
@@ -341,6 +347,17 @@ async function doSetup() {
   animation: spin 0.7s linear infinite;
   display: inline-block;
 }
+
+.switch-link {
+  text-align: center;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--blue-600);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.switch-link:hover { opacity: 0.75; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
