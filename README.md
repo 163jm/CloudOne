@@ -1,6 +1,6 @@
 # CloudOne
 
-一个以 Go + Vue3 构建的现代云端文件管理工具。
+一个以 Rust + Vue3 构建的现代云端文件管理工具。
 
 ## 功能特性
 
@@ -82,9 +82,8 @@ http://your-ip:6677/s/AbCdEfGh/raw   # 直接下载
 
 ### 前提条件
 
-- Go 1.21+（需要 CGO，用于 SQLite）
+- Rust 1.85+
 - Node.js 18+
-- GCC（Linux 系统通常已预装）
 
 ### 使用 Makefile（推荐）
 
@@ -102,23 +101,22 @@ make clean
 ### 手动构建
 
 ```bash
-# 1. 构建前端（必须先于后端，Go embed 需要 frontend/dist 存在）
+# 1. 构建前端
 cd frontend
 npm install
 npm run build
 cd ..
 
-# 2. 构建后端
-CGO_ENABLED=1 go build -ldflags="-s -w" -o cloudone .
+# 2. 构建 Rust 后端
+cargo build --release
+cp target/release/cloudone ./cloudone
 
 # 3. 运行
 export CLOUDONE_JWT_SECRET="your-long-random-secret-here"
 ./cloudone
 ```
 
-> ⚠️ **常见错误：** 若直接运行 `go build .` 而未提前构建前端，会报错：
-> `pattern frontend/dist: directory prefix does not exist`
-> 原因是 `main.go` 使用了 `//go:embed frontend/dist`，该目录必须在编译时存在。
+> Rust 后端会在运行时从 `frontend/dist` 提供静态资源；若未构建前端，会返回提示信息。
 
 ## 环境变量
 
@@ -128,5 +126,5 @@ export CLOUDONE_JWT_SECRET="your-long-random-secret-here"
 
 ## 端口
 
-程序监听 `:6677`，暂不支持通过环境变量或配置文件修改端口。
+程序默认监听 `:6677`，可通过数据目录中的 `conf.ini` 调整 `host` 与 `port`。
 
