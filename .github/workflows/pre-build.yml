@@ -42,21 +42,14 @@ jobs:
         with:
           shared-key: cloudone-pre-release
 
-      - name: Install musl tools
+      # ================= 修改部分开始 =================
+      - name: Install Cross-rs
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            musl-tools \
-            gcc-aarch64-linux-gnu \
-            clang \
-            llvm
+          cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build for Linux arm64 (musl static)
-        env:
-          CC_aarch64_unknown_linux_musl: clang
-          AR_aarch64_unknown_linux_musl: llvm-ar
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: "-C target-feature=+crt-static -C linker=rust-lld"
-        run: cargo build --release --target aarch64-unknown-linux-musl
+      - name: Build for Linux arm64 (musl static via cross)
+        run: cross build --release --target aarch64-unknown-linux-musl
+      # ================= 修改部分结束 =================
 
       - name: Prepare release binary
         run: |
@@ -95,7 +88,6 @@ jobs:
           prerelease: true # 标记为预发布
           draft: false
           generate_release_notes: true
-          # 核心：直接指定二进制文件路径，不使用目录名，防止被二次压缩
           files: |
             ./release_files/cloudone-linux-arm64
         env:
