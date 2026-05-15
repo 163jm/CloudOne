@@ -116,7 +116,7 @@ export CLOUDONE_JWT_SECRET="your-long-random-secret-here"
 ./cloudone
 ```
 
-> Rust 后端会在运行时从 `frontend/dist` 提供静态资源；若未构建前端，会返回提示信息。
+> 前端会在 `cargo build` 时从 `frontend/dist` 嵌入到 Rust 二进制中；请先执行 `npm run build`，发布后的单个 `cloudone` 二进制即可直接提供前端页面。开发环境若未嵌入前端，后端仍会尝试从本地 `frontend/dist` 读取静态资源。
 
 ## 环境变量
 
