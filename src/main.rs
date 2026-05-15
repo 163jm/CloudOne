@@ -560,12 +560,29 @@ async fn setup(State(state): State<AppState>, Json(req): Json<AuthReq>) -> Respo
     if c > 0 {
         return json_error(StatusCode::BAD_REQUEST, "already setup");
     }
-    let h = match hash(req.password, DEFAULT_COST) {
-        Ok(v) => v,
-        Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to hash password"),
+    // 用 spawn_blocking 避免 bcrypt 阻塞 tokio 异步线程（cost=12 约需 300ms CPU）
+    let password = req.password.clone();
+    let h = match tokio::task::spawn_blocking(move || hash(password, DEFAULT_COST)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(_)) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to hash password"),
+        Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
     };
+    // 再次检查，防止并发双重提交（bcrypt 耗时期间可能有第二个请求到达）
+    let c2: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+    if c2 > 0 {
+        return json_error(StatusCode::BAD_REQUEST, "already setup");
+    }
     let now = now_string();
-    let id=match sqlx::query("INSERT INTO users (username,password,token_version,created_at,updated_at) VALUES (?,?,?,?,?)").bind(req.username).bind(h).bind(0).bind(&now).bind(&now).execute(&state.db).await { Ok(r)=>r.last_insert_rowid(), Err(e)=>return json_error(StatusCode::INTERNAL_SERVER_ERROR,e) };
+    let id = match sqlx::query("INSERT INTO users (username,password,token_version,created_at,updated_at) VALUES (?,?,?,?,?)")
+        .bind(&req.username).bind(h).bind(0i64).bind(&now).bind(&now)
+        .execute(&state.db).await
+    {
+        Ok(r) => r.last_insert_rowid(),
+        Err(e) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
     let user = get_user_by_id(&state.db, id).await.unwrap();
     let token = gen_token(&state, &user).unwrap();
     ok_json(json!({"token":token,"user":user}))
@@ -592,7 +609,14 @@ async fn login(
         return json_error(StatusCode::UNAUTHORIZED, "invalid credentials");
     };
     let user = row_to_user(row).unwrap();
-    if !verify(req.password, &user.password).unwrap_or(false) {
+    let password = req.password.clone();
+    let stored_hash = user.password.clone();
+    let valid = tokio::task::spawn_blocking(move || verify(password, &stored_hash))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+    if !valid {
         return json_error(StatusCode::UNAUTHORIZED, "invalid credentials");
     }
     let token = gen_token(&state, &user).unwrap();
@@ -622,7 +646,10 @@ async fn update_user(State(state): State<AppState>, req0: Request<Body>) -> Resp
         username = u;
     }
     let password_changed = if let Some(p) = req.password.filter(|s| !s.is_empty()) {
-        password = hash(p, DEFAULT_COST).unwrap();
+        password = tokio::task::spawn_blocking(move || hash(p, DEFAULT_COST))
+            .await
+            .unwrap()
+            .unwrap();
         version += 1;
         true
     } else {
