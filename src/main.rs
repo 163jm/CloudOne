@@ -49,7 +49,6 @@ use tokio::{
 };
 use tower_http::cors::{Any, CorsLayer};
 use walkdir::WalkDir;
-
 mod embedded_frontend {
     include!(concat!(env!("OUT_DIR"), "/embedded_frontend.rs"));
 }
@@ -251,6 +250,10 @@ fn ok_json(v: Value) -> Response {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // jsonwebtoken 10.x 依赖 rustls CryptoProvider，必须在第一次使用 JWT 前初始化
+    // 忽略返回值：若已被其他 crate（如 reqwest）安装过则直接跳过
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let args = Args::parse();
     let (data_dir, mut storage_dir) = match (&args.config, &args.dir) {
         (Some(c), Some(d)) => (c.clone(), d.clone()),
