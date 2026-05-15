@@ -35,26 +35,32 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-gnu
+          targets: aarch64-unknown-linux-musl
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: cloudone-pre-release
 
-      - name: Install Linux arm64 linker
+      - name: Install musl tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          sudo apt-get install -y --no-install-recommends \
+            musl-tools \
+            gcc-aarch64-linux-gnu \
+            clang \
+            llvm
 
-      - name: Build for Linux arm64
+      - name: Build for Linux arm64 (musl static)
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cargo build --release --target aarch64-unknown-linux-gnu
+          CC_aarch64_unknown_linux_musl: clang
+          AR_aarch64_unknown_linux_musl: llvm-ar
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: "-C target-feature=+crt-static -C linker=rust-lld"
+        run: cargo build --release --target aarch64-unknown-linux-musl
 
       - name: Prepare release binary
         run: |
-          cp target/aarch64-unknown-linux-gnu/release/cloudone cloudone-linux-arm64
+          cp target/aarch64-unknown-linux-musl/release/cloudone cloudone-linux-arm64
           chmod +x cloudone-linux-arm64
 
       - name: Upload binaries to temporary storage
