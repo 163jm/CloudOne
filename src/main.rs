@@ -49,6 +49,10 @@ use tokio::{
 };
 use tower_http::cors::{Any, CorsLayer};
 use walkdir::WalkDir;
+
+mod embedded_frontend {
+    include!(concat!(env!("OUT_DIR"), "/embedded_frontend.rs"));
+}
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 #[derive(Parser, Debug)]
@@ -1987,6 +1991,13 @@ async fn static_fallback(req: Request<Body>) -> Response {
     if path.is_empty() {
         path = "index.html".into()
     }
+
+    if let Some((data, mime)) =
+        embedded_frontend::get(&path).or_else(|| embedded_frontend::get("index.html"))
+    {
+        return embedded_frontend_response(data, mime);
+    }
+
     let candidate = PathBuf::from("frontend/dist").join(&path);
     let p = if candidate.exists() {
         candidate
@@ -1998,10 +2009,21 @@ async fn static_fallback(req: Request<Body>) -> Response {
     } else {
         (
             StatusCode::OK,
-            "CloudOne frontend is not built. Run `cd frontend && npm run build`. ",
+            "CloudOne frontend is not built. Run `cd frontend && npm run build` before compiling the Rust binary.",
         )
             .into_response()
     }
+}
+
+fn embedded_frontend_response(data: &'static [u8], mime: &'static str) -> Response {
+    let mut resp = Response::new(Body::from(axum::body::Bytes::from_static(data)));
+    resp.headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    resp.headers_mut().insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    resp
 }
 
 fn encrypt(key: &[u8; 32], plaintext: &str) -> Result<String> {
