@@ -20,6 +20,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package.json
 
       - name: Build frontend
         working-directory: frontend
@@ -27,31 +29,36 @@ jobs:
           npm install
           npm run build
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          go-version: '1.21'
-          cache: true
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
 
-      - name: Download dependencies
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cloudone-release
+
+      - name: Install Linux arm64 cross toolchain
         run: |
-          go mod tidy
-          go mod download
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: Build for Linux amd64
-        env:
-          GOOS: linux
-          GOARCH: amd64
-          CGO_ENABLED: 0
-        run: go build -ldflags="-s -w" -o cloudone-linux-amd64 .
+        run: cargo build --release --target x86_64-unknown-linux-gnu
 
       - name: Build for Linux arm64
         env:
-          GOOS: linux
-          GOARCH: arm64
-          CGO_ENABLED: 0
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+
+      - name: Prepare release binaries
         run: |
-          go build -ldflags="-s -w" -o cloudone-linux-arm64 .
+          cp target/x86_64-unknown-linux-gnu/release/cloudone cloudone-linux-amd64
+          cp target/aarch64-unknown-linux-gnu/release/cloudone cloudone-linux-arm64
+          chmod +x cloudone-linux-amd64 cloudone-linux-arm64
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -60,6 +67,7 @@ jobs:
           path: |
             cloudone-linux-amd64
             cloudone-linux-arm64
+          if-no-files-found: error
 
   # ===================== 发布 Release =====================
   release:
@@ -119,9 +127,6 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/cloudone:${{ github.event.inputs.tag }}
             ${{ secrets.DOCKERHUB_USERNAME }}/cloudone:latest
-          build-args: |
-            VERSION=${{ github.event.inputs.tag }}
-
 
   docker-argo:
     needs: build
@@ -157,5 +162,3 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/cloudone:argo
-          build-args: |
-            VERSION=${{ github.event.inputs.tag }}
