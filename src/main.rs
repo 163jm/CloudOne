@@ -33,6 +33,7 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use futures_util::{SinkExt, StreamExt};
+use tokio_util::io::ReaderStream;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use rand::{Rng, RngCore, distributions::Alphanumeric};
 use reqwest::redirect::Policy;
@@ -1241,31 +1242,51 @@ async fn batch_move_copy(state: AppState, req: BatchPaths, mv: bool) -> Response
 }
 async fn batch_download(State(state): State<AppState>, Json(req): Json<BatchPaths>) -> Response {
     let fm = state.files.lock().await.clone();
-    let mut buf = std::io::Cursor::new(Vec::new());
-    {
-        let mut zw = ZipWriter::new(&mut buf);
-        for p in req.paths {
-            if let Ok(abs) = fm.safe_abs_path(&p) {
-                let name = Path::new(&p)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                let _ = zip_add_lstat(&mut zw, &abs, &name);
-            }
-        }
-        let _ = zw.finish();
-    }
-    let fname = req.filename.unwrap_or("download.zip".into());
+
+    let fname = req.filename.unwrap_or("download".into());
     let fname = if fname.to_lowercase().ends_with(".zip") {
         fname
     } else {
         format!("{fname}.zip")
     };
-    download_bytes(buf.into_inner(), "application/zip", &fname)
+
+    // zip crate 的写入需要 Seek 支持（回写 local file header），无法直接流式接管道。
+    // 使用 oneshot channel：在 spawn_blocking 中打包完毕后一次性发送，
+    // 避免阻塞 async executor，同时保持主线程非阻塞。
+    // 如需真正的流式 zip（大文件夹场景），可替换为 async-zip crate。
+    let entries: Vec<(PathBuf, String)> = req.paths.iter()
+        .filter_map(|p| {
+            fm.safe_abs_path(p).ok().map(|abs| {
+                let name = Path::new(p)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                (abs, name)
+            })
+        })
+        .collect();
+
+    if entries.is_empty() {
+        return json_error(StatusCode::BAD_REQUEST, "no valid paths");
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<anyhow::Result<Vec<u8>>>();
+    tokio::task::spawn_blocking(move || {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let mut zw = ZipWriter::new(&mut buf);
+        for (abs, name) in entries {
+            let _ = zip_add_lstat(&mut zw, &abs, &name);
+        }
+        let _ = zw.finish();
+        let _ = tx.send(Ok(buf.into_inner()));
+    });
+
+    match rx.await {
+        Ok(Ok(data)) => download_bytes(data, "application/zip", &fname),
+        _ => json_error(StatusCode::INTERNAL_SERVER_ERROR, "zip failed"),
+    }
 }
-
-
 async fn list_public_files(State(state): State<AppState>, Query(q): Query<PathQuery>) -> Response {
     let p = q.path.unwrap_or("/".into());
     if p == "/" {
@@ -1540,22 +1561,33 @@ async fn serve_file_path(p: Result<PathBuf>, attachment: bool) -> Response {
         Ok(v) => v,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
     };
-    let data = match fs::read(&abs).await {
-        Ok(v) => v,
+    let file = match tokio::fs::File::open(&abs).await {
+        Ok(f) => f,
         Err(_) => return json_error(StatusCode::NOT_FOUND, "not found"),
     };
+    let meta = file.metadata().await.ok();
     let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     let mime = ext_mime_override(&ext)
         .map(|s| s.to_string())
         .unwrap_or_else(|| mime_guess::from_path(&abs).first_or_octet_stream().to_string());
-    let name = abs.file_name().unwrap_or_default().to_string_lossy();
+    let name = abs.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let base_mime = mime.split(';').next().unwrap_or("").trim();
     let disp = if attachment || !is_browser_previewable(base_mime) {
         "attachment"
     } else {
         "inline"
     };
-    let mut resp = (StatusCode::OK, data).into_response();
+    // 流式传输：文件内容通过 ReaderStream 逐块写入响应，不占用整个文件大小的内存
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+    let mut resp = Response::new(body);
+    *resp.status_mut() = StatusCode::OK;
+    if let Some(m) = meta {
+        resp.headers_mut().insert(
+            header::CONTENT_LENGTH,
+            HeaderValue::from(m.len()),
+        );
+    }
     resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap());
     resp.headers_mut().insert(
         header::CONTENT_DISPOSITION,
