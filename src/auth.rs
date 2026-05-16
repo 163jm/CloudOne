@@ -5,7 +5,7 @@ use axum::{
     extract::{ConnectInfo, State},
     http::{HeaderMap, Request, StatusCode, header},
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use bcrypt::{DEFAULT_COST, hash, verify};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};

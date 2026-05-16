@@ -1,16 +1,14 @@
 use anyhow::anyhow;
 use axum::{
     Json,
-    body::Body,
     extract::{Multipart, Path as AxPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use bcrypt::{DEFAULT_COST, hash};
 use chrono::Utc;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use futures_util::StreamExt;
-use rand::{Rng, RngCore, distributions::Alphanumeric};
+use rand::{Rng, distributions::Alphanumeric};
 use serde::Deserialize;
 use serde_json::json;
 use std::{

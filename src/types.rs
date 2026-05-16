@@ -60,6 +60,7 @@ pub struct FileInfo {
 }
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct SearchResult {
     pub name: String,
     pub path: String,

@@ -45,7 +45,7 @@ use handler::{
 };
 use handler::{access_share, create_share, delete_share, download_share, list_shares, serve_share_raw};
 use types::{AppState, FileManager, RateLimiter};
-use util::{decrypt_opt, json_error};
+use util::decrypt_opt;
 use webdav::webdav_handler;
 
 #[derive(Parser, Debug)]

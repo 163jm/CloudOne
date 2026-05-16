@@ -207,7 +207,7 @@ fn basic_unauth() -> Response {
     r
 }
 
-async fn dav_propfind(base: &std::path::Path, rel: &str, abs: &std::path::Path, depth: &str) -> Response {
+async fn dav_propfind(_base: &std::path::Path, rel: &str, abs: &std::path::Path, depth: &str) -> Response {
     let md = match fs::metadata(abs).await {
         Ok(m) => m,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),

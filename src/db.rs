@@ -1,11 +1,10 @@
 use anyhow::Result;
-use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
-use std::{path::Path, sync::Arc, time::SystemTime};
+use std::{path::Path, time::SystemTime};
 
 use crate::types::{AppState, FileInfo, Settings, ShareLink, User};
-use crate::util::{is_danger_path, normalize_path, ok_json, json_error};
+use crate::util::{is_danger_path, normalize_path};
 
 pub async fn init_db(db: &SqlitePool) -> Result<()> {
     sqlx::query("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, token_version INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT)").execute(db).await?;
