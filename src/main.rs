@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
     let app = build_router(state);
     let cfg = load_conf(&data_dir).await?;
     let addr = format!("{}:{}", cfg.0, cfg.1);
-    eprintln!("CloudOne Rust backend starting on {addr}");
+    eprintln!("CloudOne running on {addr}");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;
     Ok(())
