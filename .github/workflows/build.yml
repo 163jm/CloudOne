@@ -46,7 +46,8 @@ jobs:
             musl-tools \
             gcc-aarch64-linux-gnu \
             clang \
-            llvm
+            llvm \
+            lld
 
       - name: Build for Linux amd64 (musl static)
         env:
@@ -58,7 +59,7 @@ jobs:
         env:
           CC_aarch64_unknown_linux_musl: clang
           AR_aarch64_unknown_linux_musl: llvm-ar
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: "-C target-feature=+crt-static -C linker=rust-lld"
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: "-C target-feature=+crt-static -C linker=lld"
         run: cargo build --release --target aarch64-unknown-linux-musl
 
       - name: Prepare release binaries

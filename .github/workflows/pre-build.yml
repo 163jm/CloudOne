@@ -42,14 +42,12 @@ jobs:
         with:
           shared-key: cloudone-pre-release
 
-      # ================= 修改部分开始 =================
-      - name: Install Cross-rs
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross
+      # 使用固定版本的 cross，避免 :main 镜像 glibc 版本不兼容问题
+      - name: Install cross (pinned version)
+        run: cargo install cross --version 0.2.5 --locked
 
       - name: Build for Linux arm64 (musl static via cross)
         run: cross build --release --target aarch64-unknown-linux-musl
-      # ================= 修改部分结束 =================
 
       - name: Prepare release binary
         run: |
