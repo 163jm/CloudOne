@@ -329,7 +329,7 @@ async fn main() -> Result<()> {
     let app = build_router(state);
     let cfg = load_conf(&data_dir).await?;
     let addr = format!("{}:{}", cfg.0, cfg.1);
-    eprintln!("CloudOne Rust running on {addr}");
+    eprintln!("CloudOne Rust backend starting on {addr}");
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(
         listener,
@@ -2130,8 +2130,93 @@ async fn webdav_handler(
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
         "PROPFIND" => dav_propfind(&base, path, &abs).await,
-        _ => StatusCode::NO_CONTENT.into_response(),
+        "COPY" | "MOVE" => {
+            let dest_header = req.headers().get("Destination")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            if dest_header.is_empty() {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            // 从 Destination URL 中提取 /dav 之后的路径部分
+            let dest_path = if let Some(idx) = dest_header.find("/dav") {
+                dest_header[idx + 4..].to_string()
+            } else {
+                dest_header.clone()
+            };
+            let abs_dest = base.join(dest_path.trim_start_matches('/'));
+            if !abs_dest.starts_with(&base) {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            if let Some(p) = abs_dest.parent() {
+                let _ = fs::create_dir_all(p).await;
+            }
+            let is_copy = req.method().as_str() == "COPY";
+            if is_copy {
+                match copy_path_recursive(&abs, &abs_dest) {
+                    Ok(_) => StatusCode::CREATED.into_response(),
+                    Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            } else {
+                match std::fs::rename(&abs, &abs_dest) {
+                    Ok(_) => StatusCode::CREATED.into_response(),
+                    Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }
+        }
+        "LOCK" => {
+            let mut token_bytes = [0u8; 8];
+            rand::thread_rng().fill_bytes(&mut token_bytes);
+            let token = format!("urn:uuid:cloudone-lock-{}", hex::encode(token_bytes));
+            let xml = format!(
+                r#"<?xml version="1.0" encoding="utf-8"?>
+<D:prop xmlns:D="DAV:"><D:lockdiscovery><D:activelock>
+<D:locktype><D:write/></D:locktype>
+<D:lockscope><D:exclusive/></D:lockscope>
+<D:depth>infinity</D:depth>
+<D:timeout>Second-3600</D:timeout>
+<D:locktoken><D:href>{token}</D:href></D:locktoken>
+</D:activelock></D:lockdiscovery></D:prop>"#,
+                token = token
+            );
+            let mut r = (StatusCode::OK, xml).into_response();
+            r.headers_mut().insert(
+                "Lock-Token",
+                HeaderValue::from_str(&format!("<{}>", token)).unwrap(),
+            );
+            r.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/xml; charset=utf-8"),
+            );
+            r
+        }
+        "UNLOCK" => StatusCode::NO_CONTENT.into_response(),
+        "PROPPATCH" => {
+            let xml = r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:"></D:multistatus>"#;
+            let mut r = (StatusCode::MULTI_STATUS, xml).into_response();
+            r.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/xml; charset=utf-8"),
+            );
+            r
+        }
+        _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
     }
+}
+
+/// 递归复制文件或目录（对应 Go 版 copyPath）
+fn copy_path_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let meta = src.symlink_metadata()?;
+    if meta.is_dir() {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            copy_path_recursive(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+    } else {
+        std::fs::copy(src, dst)?;
+    }
+    Ok(())
 }
 fn basic_unauth() -> Response {
     let mut r = StatusCode::UNAUTHORIZED.into_response();
