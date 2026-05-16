@@ -1480,6 +1480,32 @@ async fn serve_share_raw(State(state): State<AppState>, AxPath(code): AxPath<Str
     serve_file_path(fm.safe_abs_path(&link.file_path), false).await
 }
 
+/// MIME overrides for extensions whose type is ambiguous or browser-unfriendly
+fn ext_mime_override(ext: &str) -> Option<&'static str> {
+    match ext {
+        "md" | "markdown" | "yaml" | "yml" | "toml" | "ini" | "conf" | "env"
+        | "log" | "sh" | "bash" | "zsh" | "fish" | "dockerfile"
+        | "go" | "py" | "rs" | "rb" | "java" | "c" | "cpp" | "h"
+        | "ts" | "tsx" | "jsx" | "vue" | "swift" | "kt" | "lua"
+        | "r" | "sql" | "graphql" => Some("text/plain; charset=utf-8"),
+        "avif" => Some("image/avif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+fn is_browser_previewable(mime: &str) -> bool {
+    if mime.starts_with("text/") || mime.starts_with("image/")
+        || mime.starts_with("audio/") || mime.starts_with("video/") {
+        return true;
+    }
+    matches!(mime,
+        "application/pdf" | "application/json" | "application/javascript"
+        | "application/x-javascript" | "application/xml" | "application/xhtml+xml"
+        | "application/atom+xml" | "application/rss+xml" | "application/svg+xml"
+    ) || mime.contains("xml") || mime.contains("javascript")
+}
+
 async fn serve_file_path(p: Result<PathBuf>, attachment: bool) -> Response {
     let abs = match p {
         Ok(v) => v,
@@ -1489,14 +1515,19 @@ async fn serve_file_path(p: Result<PathBuf>, attachment: bool) -> Response {
         Ok(v) => v,
         Err(_) => return json_error(StatusCode::NOT_FOUND, "not found"),
     };
-    let mime = mime_guess::from_path(&abs)
-        .first_or_octet_stream()
-        .to_string();
+    let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let mime = ext_mime_override(&ext)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| mime_guess::from_path(&abs).first_or_octet_stream().to_string());
     let name = abs.file_name().unwrap_or_default().to_string_lossy();
-    let disp = if attachment { "attachment" } else { "inline" };
+    let base_mime = mime.split(';').next().unwrap_or("").trim();
+    let disp = if attachment || !is_browser_previewable(base_mime) {
+        "attachment"
+    } else {
+        "inline"
+    };
     let mut resp = (StatusCode::OK, data).into_response();
-    resp.headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap());
+    resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap());
     resp.headers_mut().insert(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_str(&format!("{disp}; filename=\"{name}\"")).unwrap(),
@@ -1504,6 +1535,10 @@ async fn serve_file_path(p: Result<PathBuf>, attachment: bool) -> Response {
     resp.headers_mut().insert(
         header::HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
+    );
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=3600"),
     );
     resp
 }
@@ -2101,8 +2136,15 @@ async fn webdav_handler(
     match req.method().as_str() {
         "OPTIONS" => {
             let mut r = StatusCode::OK.into_response();
-            r.headers_mut()
-                .insert("DAV", HeaderValue::from_static("1, 2"));
+            r.headers_mut().insert("DAV", HeaderValue::from_static("1, 2"));
+            r.headers_mut().insert(
+                header::HeaderName::from_static("allow"),
+                HeaderValue::from_static("OPTIONS, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, LOCK, UNLOCK"),
+            );
+            r.headers_mut().insert(
+                header::HeaderName::from_static("ms-author-via"),
+                HeaderValue::from_static("DAV"),
+            );
             r
         }
         "GET" | "HEAD" => serve_file_path(Ok(abs), false).await,
@@ -2129,7 +2171,14 @@ async fn webdav_handler(
             Ok(_) => StatusCode::CREATED.into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
-        "PROPFIND" => dav_propfind(&base, path, &abs).await,
+        "PROPFIND" => {
+            let depth = req.headers()
+                .get("Depth")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("1")
+                .to_string();
+            dav_propfind(&base, path, &abs, &depth).await
+        }
         "COPY" | "MOVE" => {
             let dest_header = req.headers().get("Destination")
                 .and_then(|v| v.to_str().ok())
@@ -2226,14 +2275,26 @@ fn basic_unauth() -> Response {
     );
     r
 }
-async fn dav_propfind(_base: &Path, rel: &str, abs: &Path) -> Response {
+async fn dav_propfind(base: &Path, rel: &str, abs: &Path, depth: &str) -> Response {
     let md = match fs::metadata(abs).await {
         Ok(m) => m,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
     };
-    let mut body =
-        String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\">");
-    body.push_str(&format!("<D:response><D:href>/dav{}</D:href><D:propstat><D:prop>{}<D:getcontentlength>{}</D:getcontentlength></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>", rel, if md.is_dir(){"<D:resourcetype><D:collection/></D:resourcetype>"}else{"<D:resourcetype/>"}, md.len()));
+    let mut body = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\">");
+    write_propfind_entry(&mut body, rel, &md);
+    // Depth: 1 (default) — list direct children for directories
+    if md.is_dir() && depth != "0" {
+        if let Ok(mut rd) = fs::read_dir(abs).await {
+            let child_base = if rel.ends_with('/') { rel.to_string() } else { format!("{}/", rel) };
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                if let Ok(child_md) = entry.metadata().await {
+                    let child_name = entry.file_name().to_string_lossy().into_owned();
+                    let child_rel = format!("{}{}", child_base, child_name);
+                    write_propfind_entry(&mut body, &child_rel, &child_md);
+                }
+            }
+        }
+    }
     body.push_str("</D:multistatus>");
     let mut r = (StatusCode::MULTI_STATUS, body).into_response();
     r.headers_mut().insert(
@@ -2241,6 +2302,62 @@ async fn dav_propfind(_base: &Path, rel: &str, abs: &Path) -> Response {
         HeaderValue::from_static("application/xml; charset=utf-8"),
     );
     r
+}
+
+fn write_propfind_entry(body: &mut String, rel: &str, md: &std::fs::Metadata) {
+    let href = if md.is_dir() && !rel.ends_with('/') {
+        format!("/dav{}/", rel)
+    } else {
+        format!("/dav{}", rel)
+    };
+    let resource_type = if md.is_dir() {
+        "<D:resourcetype><D:collection/></D:resourcetype>"
+    } else {
+        "<D:resourcetype/>"
+    };
+    let content_length = if md.is_dir() {
+        String::new()
+    } else {
+        format!("<D:getcontentlength>{}</D:getcontentlength>", md.len())
+    };
+    let mod_time = md.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| {
+            // Format as RFC 1123: "Mon, 02 Jan 2006 15:04:05 GMT"
+            let secs = d.as_secs();
+            let days_since_epoch = secs / 86400;
+            let time_of_day = secs % 86400;
+            let h = time_of_day / 3600;
+            let m = (time_of_day % 3600) / 60;
+            let s = time_of_day % 60;
+            // Compute year/month/day from days since 1970-01-01
+            let mut y = 1970u64;
+            let mut d = days_since_epoch;
+            loop {
+                let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+                if d < days_in_year { break; }
+                d -= days_in_year;
+                y += 1;
+            }
+            let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+            let month_days = [31u64, if leap {29} else {28}, 31,30,31,30,31,31,30,31,30,31];
+            let mut mo = 0usize;
+            for (i, &days) in month_days.iter().enumerate() {
+                if d < days { mo = i + 1; break; }
+                d -= days;
+            }
+            let dom = d + 1;
+            let day_names = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+            let dow = day_names[((days_since_epoch + 4) % 7) as usize];
+            let mon_names = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            format!("{}, {:02} {} {} {:02}:{:02}:{:02} GMT", dow, dom, mon_names[mo], y, h, m, s)
+        })
+        .unwrap_or_default();
+    let display_name = rel.trim_end_matches('/').rsplit('/').next().unwrap_or(rel);
+    body.push_str(&format!(
+        "<D:response><D:href>{href}</D:href><D:propstat><D:prop>{resource_type}{content_length}<D:getlastmodified>{mod_time}</D:getlastmodified><D:displayname>{display_name}</D:displayname></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
+    ));
 }
 
 // ── PTY 辅助函数（对应 Go 版 internal/terminal/terminal.go）─────────────────
