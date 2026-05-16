@@ -162,6 +162,24 @@ impl RateLimiter {
             hits: Mutex::new(HashMap::new()),
         }
     }
+
+    /// 启动后台清理任务：每 5 分钟清理超过 2 个窗口时长未活动的 IP 条目，
+    /// 防止长期运行后 HashMap 无限增长（对齐 Go rateLimiter.cleanup goroutine）
+    fn spawn_cleanup(self: &Arc<Self>) {
+        let limiter = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let cutoff = SystemTime::now() - limiter.window * 2;
+                let mut guard = limiter.hits.lock().await;
+                guard.retain(|_, timestamps| {
+                    timestamps.iter().any(|t| *t > cutoff)
+                });
+            }
+        });
+    }
+
     async fn allow(&self, ip: String) -> bool {
         let now = SystemTime::now();
         let cutoff = now - self.window;
@@ -326,6 +344,8 @@ async fn main() -> Result<()> {
         login_limiter: Arc::new(RateLimiter::new(5, Duration::from_secs(60))),
         webdav_limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(60))),
     };
+    state.login_limiter.spawn_cleanup();
+    state.webdav_limiter.spawn_cleanup();
     let app = build_router(state);
     let cfg = load_conf(&data_dir).await?;
     let addr = format!("{}:{}", cfg.0, cfg.1);
@@ -1262,8 +1282,17 @@ async fn list_public_files(State(state): State<AppState>, Query(q): Query<PathQu
                 continue;
             }
             if let Ok(abs) = fm.safe_abs_path(&rel) {
-                if let Ok(fi) = file_info(&state.db, &abs, &rel).await {
-                    list.push(fi)
+                match file_info(&state.db, &abs, &rel).await {
+                    Ok(fi) => list.push(fi),
+                    Err(_) => {
+                        // 文件已不存在，清理脏记录（对齐 Go GetAllPublicFlat 行为）
+                        let _ = sqlx::query(
+                            "DELETE FROM file_visibilities WHERE file_path=?"
+                        )
+                        .bind(&rel)
+                        .execute(&state.db)
+                        .await;
+                    }
                 }
             }
         }
@@ -2673,13 +2702,27 @@ async fn load_conf(data: &Path) -> Result<(String, String)> {
         .unwrap_or_default();
     let mut host = "0.0.0.0".to_string();
     let mut port = "6677".to_string();
+    let mut section = String::new();
     for l in s.lines() {
         let l = l.trim();
-        if let Some(v) = l.strip_prefix("host=") {
-            host = v.to_string()
+        // 跳过空行和注释行（# 或 ;）
+        if l.is_empty() || l.starts_with('#') || l.starts_with(';') {
+            continue;
         }
-        if let Some(v) = l.strip_prefix("port=") {
-            port = v.to_string()
+        // section 头
+        if l.starts_with('[') && l.ends_with(']') {
+            section = l[1..l.len()-1].trim().to_lowercase();
+            continue;
+        }
+        let Some((k, v)) = l.split_once('=') else { continue };
+        let k = k.trim();
+        // 去除行内注释（" #" 之前的部分）
+        let v = v.trim();
+        let v = if let Some(idx) = v.find(" #") { v[..idx].trim() } else { v };
+        match (section.as_str(), k) {
+            ("server", "host") => host = v.to_string(),
+            ("server", "port") => port = v.to_string(),
+            _ => {}
         }
     }
     Ok((host, port))
