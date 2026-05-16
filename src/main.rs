@@ -1,8 +1,9 @@
 use std::{
     collections::HashMap,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     io::{Read, Write},
     net::IpAddr,
+    os::unix::io::{FromRawFd, RawFd},
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -40,6 +41,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
 use tar::{Archive as TarArchive, Builder as TarBuilder};
+use std::os::unix::process::CommandExt;
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -787,18 +789,73 @@ async fn file_info(db: &SqlitePool, abs: &Path, rel: &str) -> Result<FileInfo> {
     })
 }
 async fn list_dir(state: &AppState, rel: &str) -> Result<Vec<FileInfo>> {
+    let settings = get_settings(&state.db).await?;
+    let show_hidden = settings.show_hidden;
     let fm = state.files.lock().await.clone();
     let abs = fm.safe_abs_path(rel)?;
     let mut rd = fs::read_dir(&abs).await?;
-    let mut out = Vec::new();
     let base = normalize_path(rel);
+
+    // 先收集所有条目，批量查询可见性（避免 N+1 问题）
+    let mut entries: Vec<(PathBuf, String)> = Vec::new();
     while let Some(e) = rd.next_entry().await? {
         let p = e.path();
         if is_danger_path(&p) {
             continue;
         }
-        let child = normalize_path(&format!("{}/{}", base, e.file_name().to_string_lossy()));
-        if let Ok(fi) = file_info(&state.db, &p, &child).await {
+        let name = e.file_name().to_string_lossy().into_owned();
+        // 过滤隐藏文件（以 . 开头）
+        if !show_hidden && name.starts_with('.') {
+            continue;
+        }
+        let child = normalize_path(&format!("{}/{}", base, name));
+        entries.push((p, child));
+    }
+
+    // 批量查询可见性
+    let child_paths: Vec<String> = entries.iter().map(|(_, c)| c.clone()).collect();
+    let mut vis_map: HashMap<String, bool> = HashMap::new();
+    if !child_paths.is_empty() {
+        let placeholders = child_paths.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query_str = format!(
+            "SELECT file_path FROM file_visibilities WHERE is_public=1 AND file_path IN ({})",
+            placeholders
+        );
+        let mut q = sqlx::query(&query_str);
+        for p in &child_paths {
+            q = q.bind(p);
+        }
+        if let Ok(rows) = q.fetch_all(&state.db).await {
+            for row in rows {
+                let fp: String = row.get(0);
+                vis_map.insert(fp, true);
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (p, child) in entries {
+        let abs_p = p.clone();
+        // 用 tokio spawn_blocking 读取元数据，跟随符号链接
+        let meta = tokio::task::spawn_blocking(move || std::fs::metadata(&abs_p)).await;
+        if let Ok(Ok(md)) = meta {
+            #[cfg(unix)]
+            use std::os::unix::fs::PermissionsExt;
+            #[cfg(unix)]
+            let mode = md.permissions().mode();
+            #[cfg(not(unix))]
+            let mode = 0u32;
+
+            let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let fi = FileInfo {
+                name,
+                path: child.clone(),
+                is_dir: md.is_dir(),
+                size: if md.is_dir() { 0 } else { md.len() },
+                mod_time: DateTime::<Utc>::from(md.modified().unwrap_or(SystemTime::now())).to_rfc3339(),
+                is_public: *vis_map.get(&child).unwrap_or(&false),
+                mode,
+            };
             out.push(fi);
         }
     }
@@ -1175,7 +1232,7 @@ async fn batch_download(State(state): State<AppState>, Json(req): Json<BatchPath
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                let _ = zip_add(&mut zw, &abs, &name);
+                let _ = zip_add_lstat(&mut zw, &abs, &name);
             }
         }
         let _ = zw.finish();
@@ -1188,30 +1245,7 @@ async fn batch_download(State(state): State<AppState>, Json(req): Json<BatchPath
     };
     download_bytes(buf.into_inner(), "application/zip", &fname)
 }
-fn zip_add<W: Write + std::io::Seek>(
-    zw: &mut ZipWriter<W>,
-    abs: &Path,
-    name: &str,
-) -> zip::result::ZipResult<()> {
-    if abs.is_dir() {
-        for e in std::fs::read_dir(abs)? {
-            let e = e?;
-            zip_add(
-                zw,
-                &e.path(),
-                &format!("{}/{}", name, e.file_name().to_string_lossy()),
-            )?;
-        }
-    } else {
-        zw.start_file(
-            name,
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
-        )?;
-        let mut f = std::fs::File::open(abs)?;
-        std::io::copy(&mut f, zw)?;
-    }
-    Ok(())
-}
+
 
 async fn list_public_files(State(state): State<AppState>, Query(q): Query<PathQuery>) -> Response {
     let p = q.path.unwrap_or("/".into());
@@ -1587,30 +1621,38 @@ async fn compress_files(
     State(state): State<AppState>,
     Json(mut req): Json<CompressReq>,
 ) -> Response {
-    let fmt = req.format.take().unwrap_or("zip".into());
+    let fmt_str = req.format.take().unwrap_or("zip".into());
     let dir = req.dir.unwrap_or("/".into());
     let mut out = req.output.unwrap_or("archive".into());
-    let fmt = match fmt.as_str() {
+    let fmt = match fmt_str.as_str() {
         "tar" => {
-            if !out.ends_with(".tar") {
-                out.push_str(".tar")
-            };
+            if !out.ends_with(".tar") { out.push_str(".tar") }
             "tar"
         }
         "tar.gz" => {
-            if !out.ends_with(".tar.gz") {
-                out.push_str(".tar.gz")
-            };
+            if !out.ends_with(".tar.gz") { out.push_str(".tar.gz") }
             "tar.gz"
         }
         _ => {
-            if !out.ends_with(".zip") {
-                out.push_str(".zip")
-            };
+            if !out.ends_with(".zip") { out.push_str(".zip") }
             "zip"
         }
     };
     let fm = state.files.lock().await.clone();
+
+    // 收集有效路径（与 Go 版对齐：用文件/目录自身名称作为压缩包内路径前缀）
+    struct SrcEntry { abs: PathBuf, arc_name: String }
+    let mut entries: Vec<SrcEntry> = Vec::new();
+    for p in &req.paths {
+        if let Ok(abs) = fm.safe_abs_path(p) {
+            let arc_name = abs.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            entries.push(SrcEntry { abs, arc_name });
+        }
+    }
+    if entries.is_empty() {
+        return json_error(StatusCode::BAD_REQUEST, "no valid paths");
+    }
+
     let out_abs = match fm.safe_abs_path(&format!("{dir}/{out}")) {
         Ok(p) => p,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
@@ -1618,46 +1660,96 @@ async fn compress_files(
     if let Some(p) = out_abs.parent() {
         let _ = std::fs::create_dir_all(p);
     }
-    let result: Result<()> = (|| {
+
+    let out_clone = out.clone();
+    let result: Result<()> = tokio::task::spawn_blocking(move || -> Result<()> {
         let file = std::fs::File::create(&out_abs)?;
-        if fmt == "zip" {
-            let mut zw = ZipWriter::new(file);
-            for p in req.paths {
-                let abs = fm.safe_abs_path(&p)?;
-                let rel = abs
-                    .strip_prefix(fm.root())
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string();
-                zip_add(&mut zw, &abs, &rel)?;
+        match fmt {
+            "zip" => {
+                let mut zw = ZipWriter::new(file);
+                for e in entries {
+                    zip_add_lstat(&mut zw, &e.abs, &e.arc_name)?;
+                }
+                zw.finish()?;
             }
-            zw.finish()?;
-        } else {
-            if fmt == "tar.gz" {
-                let enc = GzEncoder::new(file, Compression::default());
-                let mut tar = TarBuilder::new(enc);
-                for p in req.paths {
-                    let abs = fm.safe_abs_path(&p)?;
-                    let rel = abs.strip_prefix(fm.root()).unwrap();
-                    tar.append_path_with_name(&abs, rel)?;
+            _ => {
+                // tar or tar.gz
+                if fmt == "tar.gz" {
+                    let enc = GzEncoder::new(file, Compression::default());
+                    let mut tw = TarBuilder::new(enc);
+                    tw.follow_symlinks(false); // 不跟随符号链接，与 Go Lstat 对齐
+                    for e in entries {
+                        tar_add(&mut tw, &e.abs, &e.arc_name)?;
+                    }
+                    tw.into_inner()?.finish()?;
+                } else {
+                    let mut tw = TarBuilder::new(file);
+                    tw.follow_symlinks(false);
+                    for e in entries {
+                        tar_add(&mut tw, &e.abs, &e.arc_name)?;
+                    }
+                    tw.finish()?;
                 }
-                tar.finish()?;
-            } else {
-                let mut tar = TarBuilder::new(file);
-                for p in req.paths {
-                    let abs = fm.safe_abs_path(&p)?;
-                    let rel = abs.strip_prefix(fm.root()).unwrap();
-                    tar.append_path_with_name(&abs, rel)?;
-                }
-                tar.finish()?;
             }
         }
         Ok(())
-    })();
+    }).await.map_err(|e| anyhow!(e))?;
+
     match result {
-        Ok(_) => ok_json(json!({"ok":true,"output":out})),
+        Ok(_) => ok_json(json!({"ok":true,"output":out_clone})),
         Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
+}
+
+/// zip 压缩辅助（使用 Lstat 不跟随符号链接，与 Go 版对齐）
+fn zip_add_lstat<W: Write + std::io::Seek>(
+    zw: &mut ZipWriter<W>,
+    abs: &Path,
+    name: &str,
+) -> zip::result::ZipResult<()> {
+    let info = match abs.symlink_metadata() {
+        Ok(m) => m,
+        Err(_) => return Ok(()),
+    };
+    if info.is_dir() {
+        for e in std::fs::read_dir(abs)? {
+            let e = e?;
+            zip_add_lstat(zw, &e.path(), &format!("{}/{}", name, e.file_name().to_string_lossy()))?;
+        }
+    } else if info.is_file() {
+        let opts = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(info.permissions().mode() as u16);
+        zw.start_file(name, opts)?;
+        let mut f = std::fs::File::open(abs)?;
+        std::io::copy(&mut f, zw)?;
+    }
+    // 符号链接跳过（与 Go 版 Lstat + !info.IsDir() 等价）
+    Ok(())
+}
+
+/// tar 压缩辅助（递归，不跟随符号链接）
+fn tar_add<W: Write>(tw: &mut TarBuilder<W>, abs: &Path, name: &str) -> std::io::Result<()> {
+    let info = abs.symlink_metadata()?;
+    if info.is_dir() {
+        let mut hdr = tar::Header::new_gnu();
+        hdr.set_metadata(&info);
+        hdr.set_path(format!("{}/", name))?;
+        hdr.set_cksum();
+        tw.append(&hdr, std::io::empty())?;
+        for e in std::fs::read_dir(abs)? {
+            let e = e?;
+            tar_add(tw, &e.path(), &format!("{}/{}", name, e.file_name().to_string_lossy()))?;
+        }
+    } else if info.is_file() {
+        let mut hdr = tar::Header::new_gnu();
+        hdr.set_metadata(&info);
+        hdr.set_path(name)?;
+        hdr.set_cksum();
+        let mut f = std::fs::File::open(abs)?;
+        tw.append(&hdr, &mut f)?;
+    }
+    Ok(())
 }
 #[derive(Deserialize)]
 struct DecompressReq {
@@ -1673,44 +1765,92 @@ async fn decompress_file(
         Ok(p) => p,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
     };
-    let dest = match fm.safe_abs_path(&req.dir.unwrap_or_else(|| {
+    let dest_rel = req.dir.unwrap_or_else(|| {
         Path::new(&req.path)
             .parent()
-            .unwrap_or(Path::new("/"))
-            .to_string_lossy()
-            .to_string()
-    })) {
+            .map(|p| {
+                let s = p.to_string_lossy();
+                if s.is_empty() || s == "." { "/".into() } else { s.into_owned() }
+            })
+            .unwrap_or_else(|| "/".into())
+    });
+    let dest = match fm.safe_abs_path(&dest_rel) {
         Ok(p) => p,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
     };
-    let name = abs
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_lowercase();
-    let result: Result<()> = (|| {
+    let name = abs.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+
+    // safe_extract：防 zip-slip 路径穿越（与 Go 版 safeExtract 对齐）
+    fn safe_extract(dest: &Path, entry_name: &str, reader: &mut dyn Read, mode: u32, is_dir: bool) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        // 清理路径，防止 ../ 穿越
+        let clean = dest.join(Path::new(&format!("/{}", entry_name)).components()
+            .filter(|c| matches!(c, std::path::Component::Normal(_)))
+            .collect::<PathBuf>());
+        if !clean.starts_with(dest) {
+            return Ok(()); // 跳过非法路径
+        }
+        if is_dir {
+            return std::fs::create_dir_all(&clean);
+        }
+        if let Some(parent) = clean.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let perm = std::fs::Permissions::from_mode((mode & 0o777) | 0o600);
+        let mut f = std::fs::OpenOptions::new()
+            .create(true).write(true).truncate(true)
+            .open(&clean)?;
+        f.set_permissions(perm)?;
+        std::io::copy(reader, &mut f)?;
+        Ok(())
+    }
+
+    let result: Result<()> = tokio::task::spawn_blocking(move || -> Result<()> {
         std::fs::create_dir_all(&dest)?;
         if name.ends_with(".zip") {
             let f = std::fs::File::open(&abs)?;
             let mut za = ZipArchive::new(f)?;
-            za.extract(&dest)?;
+            for i in 0..za.len() {
+                let mut zf = za.by_index(i)?;
+                let entry_name = zf.name().to_string();
+                let is_dir = zf.is_dir();
+                let mode = zf.unix_mode().unwrap_or(0o644);
+                safe_extract(&dest, &entry_name, &mut zf, mode, is_dir)?;
+            }
         } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
             let f = std::fs::File::open(&abs)?;
-            TarArchive::new(GzDecoder::new(f)).unpack(&dest)?;
+            let mut tr = TarArchive::new(GzDecoder::new(f));
+            for entry in tr.entries()? {
+                let mut entry = entry?;
+                let hdr = entry.header().clone();
+                let entry_path = hdr.path()?.to_string_lossy().into_owned();
+                let is_dir = hdr.entry_type().is_dir();
+                let mode = hdr.mode().unwrap_or(0o644);
+                safe_extract(&dest, &entry_path, &mut entry, mode, is_dir)?;
+            }
         } else if name.ends_with(".tar") {
             let f = std::fs::File::open(&abs)?;
-            TarArchive::new(f).unpack(&dest)?;
+            let mut tr = TarArchive::new(f);
+            for entry in tr.entries()? {
+                let mut entry = entry?;
+                let hdr = entry.header().clone();
+                let entry_path = hdr.path()?.to_string_lossy().into_owned();
+                let is_dir = hdr.entry_type().is_dir();
+                let mode = hdr.mode().unwrap_or(0o644);
+                safe_extract(&dest, &entry_path, &mut entry, mode, is_dir)?;
+            }
         } else if name.ends_with(".gz") {
+            // 单文件 .gz
             let f = std::fs::File::open(&abs)?;
             let mut gz = GzDecoder::new(f);
-            let out = dest.join(abs.file_stem().unwrap_or_default());
-            let mut of = std::fs::File::create(out)?;
-            std::io::copy(&mut gz, &mut of)?;
+            let out_name = abs.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            safe_extract(&dest, &out_name, &mut gz, 0o644, false)?;
         } else {
             return Err(anyhow!("unsupported archive format"));
         }
         Ok(())
-    })();
+    }).await.map_err(|e| anyhow!(e))?.map_err(|e| anyhow!(e));
+
     match result {
         Ok(_) => ok_json(json!({"ok":true})),
         Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -1722,43 +1862,94 @@ struct FetchReq {
     filename: Option<String>,
     dir: Option<String>,
 }
+// GitHub 加速代理前缀列表（与 Go 版对齐）
+const GITHUB_PROXY_PREFIXES: &[&str] = &[
+    "https://gh-proxy.com/",
+    "https://gh.ddlc.top/",
+    "https://ghproxy.it/",
+];
+
+fn is_github_url(raw: &str) -> bool {
+    let github_hosts = [
+        "github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "codeload.github.com",
+        "releases.githubusercontent.com",
+        "gist.githubusercontent.com",
+        "gist.github.com",
+    ];
+    if let Ok(u) = url::Url::parse(raw) {
+        if let Some(host) = u.host_str() {
+            let h = host.to_lowercase();
+            for gh in &github_hosts {
+                if h == *gh || h.ends_with(&format!(".{}", gh)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 async fn fetch_url(State(state): State<AppState>, Json(req): Json<FetchReq>) -> Response {
     if let Err(e) = validate_public_url(&req.url).await {
         return json_error(StatusCode::BAD_REQUEST, e);
     }
     let fm = state.files.lock().await.clone();
-    let dir = match fm.safe_abs_path(&req.dir.unwrap_or("/".into())) {
+    let dir = match fm.safe_abs_path(&req.dir.clone().unwrap_or("/".into())) {
         Ok(p) => p,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
     };
     let _ = fs::create_dir_all(&dir).await;
-    let fname = req.filename.unwrap_or_else(|| {
+
+    // 从原始 URL 推断文件名（避免代理前缀影响）
+    let fname = req.filename.clone().unwrap_or_else(|| {
         url::Url::parse(&req.url)
             .ok()
             .and_then(|u| u.path_segments()?.last().map(str::to_string))
-            .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty() && *s != "." && *s != "/")
             .unwrap_or("download".into())
     });
     let out = dir.join(safe_name(&fname));
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(1800))
         .redirect(Policy::limited(10))
         .build()
         .unwrap();
-    match client.get(&req.url).send().await {
-        Ok(r) if r.status().is_success() => match r.bytes().await {
-            Ok(b) => match fs::write(out, b).await {
-                Ok(_) => ok_json(json!({"ok":true})),
-                Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-            },
-            Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-        },
-        Ok(r) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("remote returned {}", r.status()),
-        ),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+
+    // 构建待尝试 URL 列表：先直连，若是 GitHub 链接则追加代理
+    let mut urls_to_try: Vec<String> = vec![req.url.clone()];
+    if is_github_url(&req.url) {
+        for prefix in GITHUB_PROXY_PREFIXES {
+            urls_to_try.push(format!("{}{}", prefix, req.url));
+        }
     }
+
+    let mut last_err = String::new();
+    for try_url in &urls_to_try {
+        match client.get(try_url).send().await {
+            Ok(r) if r.status().is_success() => {
+                match r.bytes().await {
+                    Ok(b) => match fs::write(&out, b).await {
+                        Ok(_) => return ok_json(json!({"ok":true})),
+                        Err(e) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+                    },
+                    Err(e) => {
+                        last_err = e.to_string();
+                    }
+                }
+            }
+            Ok(r) => {
+                last_err = format!("remote returned {} [{}]", r.status(), try_url);
+            }
+            Err(e) => {
+                last_err = format!("fetch failed [{}]: {}", try_url, e);
+            }
+        }
+    }
+    json_error(StatusCode::INTERNAL_SERVER_ERROR, last_err)
 }
 async fn validate_public_url(raw: &str) -> Result<()> {
     let u = url::Url::parse(raw)?;
@@ -1960,60 +2151,219 @@ async fn dav_propfind(_base: &Path, rel: &str, abs: &Path) -> Response {
     r
 }
 
-async fn terminal_ws(ws: WebSocketUpgrade) -> Response {
+// ── PTY 辅助函数（对应 Go 版 internal/terminal/terminal.go）─────────────────
+
+/// 打开一个 PTY master/slave 对，返回 master fd。
+/// 在 Linux 上通过 /dev/ptmx 实现，与 Go 版逻辑完全对应。
+fn open_pty() -> std::io::Result<RawFd> {
+    let master_fd = unsafe {
+        libc::open(
+            b"/dev/ptmx\0".as_ptr() as *const libc::c_char,
+            libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
+        )
+    };
+    if master_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // 解锁 slave PTY
+    let unlock: libc::c_int = 0;
+    if unsafe { libc::ioctl(master_fd, libc::TIOCSPTLCK, &unlock) } < 0 {
+        unsafe { libc::close(master_fd) };
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(master_fd)
+}
+
+fn get_slave_name(master_fd: RawFd) -> std::io::Result<OsString> {
+    let mut ptn: libc::c_uint = 0;
+    if unsafe { libc::ioctl(master_fd, libc::TIOCGPTN, &mut ptn) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(OsString::from(format!("/dev/pts/{}", ptn)))
+}
+
+fn resize_pty(master_fd: RawFd, rows: u16, cols: u16) {
+    #[repr(C)]
+    struct Winsize {
+        ws_row: u16,
+        ws_col: u16,
+        ws_xpixel: u16,
+        ws_ypixel: u16,
+    }
+    let ws = Winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    unsafe { libc::ioctl(master_fd, libc::TIOCSWINSZ, &ws) };
+}
+
+async fn terminal_ws(
+    State(state): State<AppState>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    // WebSocket 无法携带 Authorization header，从 ?token= 查询参数取 JWT
+    let token_str = q.get("token").cloned().unwrap_or_default();
+    if token_str.is_empty() {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+    let data = match jsonwebtoken::decode::<Claims>(
+        &token_str,
+        &jsonwebtoken::DecodingKey::from_secret(&state.jwt_secret),
+        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+    ) {
+        Ok(v) => v,
+        Err(_) => return json_error(StatusCode::UNAUTHORIZED, "unauthorized"),
+    };
+    let user = match get_user_by_id(&state.db, data.claims.sub).await {
+        Ok(u) => u,
+        Err(_) => return json_error(StatusCode::UNAUTHORIZED, "user not found"),
+    };
+    if user.token_version != data.claims.version {
+        return json_error(StatusCode::UNAUTHORIZED, "token revoked");
+    }
     ws.on_upgrade(handle_ws)
 }
+
 async fn handle_ws(mut socket: WebSocket) {
-    let shell = if Path::new("/bin/bash").exists() {
-        "/bin/bash"
-    } else {
-        "/bin/sh"
+    // 打开 PTY master
+    let master_fd = match tokio::task::spawn_blocking(open_pty).await {
+        Ok(Ok(fd)) => fd,
+        _ => {
+            let _ = socket.send(Message::Text(
+                json!({"type":"error","data":"Failed to open PTY"}).to_string().into(),
+            )).await;
+            return;
+        }
     };
-    let mut child = match Command::new(shell)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+
+    // 获取 slave 设备路径
+    let slave_path = match get_slave_name(master_fd) {
+        Ok(p) => p,
+        Err(e) => {
+            unsafe { libc::close(master_fd) };
+            let _ = socket.send(Message::Text(
+                json!({"type":"error","data": format!("PTY slave error: {e}")}).to_string().into(),
+            )).await;
+            return;
+        }
+    };
+
+    // 打开 slave fd（子进程 stdin/stdout/stderr 用）
+    let slave_cpath = std::ffi::CString::new(slave_path.to_string_lossy().as_ref()).unwrap_or_default();
+    let slave_fd = unsafe {
+        libc::open(slave_cpath.as_ptr(), libc::O_RDWR | libc::O_NOCTTY)
+    };
+    if slave_fd < 0 {
+        unsafe { libc::close(master_fd) };
+        let _ = socket.send(Message::Text(
+            json!({"type":"error","data":"Failed to open PTY slave"}).to_string().into(),
+        )).await;
+        return;
+    }
+
+    let shell = if Path::new("/bin/bash").exists() { "/bin/bash" } else { "/bin/sh" };
+
+    // 构建命令，slave fd 作为 stdin/stdout/stderr
+    let mut cmd = Command::new(shell);
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    // 通过 pre_exec 在子进程里做 setsid + 设置控制终端
+    unsafe {
+        let sfd = slave_fd;
+        cmd.pre_exec(move || {
+            // 新建会话
+            libc::setsid();
+            // 将 slave 设置为控制终端
+            libc::ioctl(sfd, libc::TIOCSCTTY, 0 as libc::c_int);
+            // 重定向 stdin/stdout/stderr 到 slave
+            libc::dup2(sfd, 0);
+            libc::dup2(sfd, 1);
+            libc::dup2(sfd, 2);
+            if sfd > 2 {
+                libc::close(sfd);
+            }
+            Ok(())
+        });
+    }
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(_) => return,
+        Err(e) => {
+            unsafe { libc::close(slave_fd); libc::close(master_fd); }
+            let _ = socket.send(Message::Text(
+                json!({"type":"error","data": format!("Failed to start shell: {e}")}).to_string().into(),
+            )).await;
+            return;
+        }
     };
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = child.stdout.take().unwrap();
-    let _ = socket
-        .send(Message::Text(
-            json!({"type":"connected"}).to_string().into(),
-        ))
-        .await;
+
+    // 父进程关闭 slave（子进程已继承）
+    unsafe { libc::close(slave_fd) };
+
+    let _ = socket.send(Message::Text(
+        json!({"type":"connected"}).to_string().into(),
+    )).await;
+
+    let master_file = unsafe { std::fs::File::from_raw_fd(master_fd) };
+    let master_fd_clone = master_fd;
+
     let (mut tx, mut rx) = socket.split();
-    let out = tokio::spawn(async move {
+
+    // PTY → WebSocket：在独立线程中阻塞读
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut f = master_file;
         let mut buf = [0u8; 4096];
         loop {
-            match stdout.read(&mut buf).await {
+            match f.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    let _ = tx
-                        .send(Message::Text(
-                            json!({"type":"output","data":String::from_utf8_lossy(&buf[..n])})
-                                .to_string()
-                                .into(),
-                        ))
-                        .await;
+                    if out_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
                 }
             }
         }
     });
+
+    // 转发 PTY 输出到 WebSocket
+    let ws_out = tokio::spawn(async move {
+        while let Some(data) = out_rx.recv().await {
+            let text = json!({"type":"output","data": String::from_utf8_lossy(&data)}).to_string();
+            if tx.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // WebSocket → PTY（主循环）
     while let Some(Ok(Message::Text(t))) = rx.next().await {
         if let Ok(v) = serde_json::from_str::<Value>(&t) {
-            if v["type"] == "input" {
-                let _ = stdin
-                    .write_all(v["data"].as_str().unwrap_or("").as_bytes())
-                    .await;
+            match v["type"].as_str().unwrap_or("") {
+                "input" => {
+                    let data = v["data"].as_str().unwrap_or("").as_bytes().to_vec();
+                    let fd = master_fd_clone;
+                    tokio::task::spawn_blocking(move || {
+                        unsafe { libc::write(fd, data.as_ptr() as *const libc::c_void, data.len()) };
+                    }).await.ok();
+                }
+                "resize" => {
+                    let rows = v["rows"].as_u64().unwrap_or(24) as u16;
+                    let cols = v["cols"].as_u64().unwrap_or(80) as u16;
+                    let rows = if rows == 0 { 24 } else { rows };
+                    let cols = if cols == 0 { 80 } else { cols };
+                    resize_pty(master_fd_clone, rows, cols);
+                }
+                _ => {}
             }
         }
     }
+
     let _ = child.kill().await;
-    let _ = out.await;
+    ws_out.abort();
+    // master_fd 已被 File 接管，close 由 drop 触发（线程中的 File 在读完后 drop）
 }
 
 async fn static_fallback(req: Request<Body>) -> Response {
