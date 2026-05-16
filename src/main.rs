@@ -1561,6 +1561,11 @@ async fn serve_file_path(p: Result<PathBuf>, attachment: bool) -> Response {
         Ok(v) => v,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
     };
+    // 目录不能直接下载（对齐 Go：c.File 对目录返回列表页而非 zip）
+    // 前端下载文件夹应走 batch-download 接口
+    if abs.is_dir() {
+        return json_error(StatusCode::BAD_REQUEST, "cannot download a directory directly; use batch-download");
+    }
     let file = match tokio::fs::File::open(&abs).await {
         Ok(f) => f,
         Err(_) => return json_error(StatusCode::NOT_FOUND, "not found"),
