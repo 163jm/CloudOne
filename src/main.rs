@@ -2034,13 +2034,34 @@ async fn fetch_url(State(state): State<AppState>, Json(req): Json<FetchReq>) -> 
     for try_url in &urls_to_try {
         match client.get(try_url).send().await {
             Ok(r) if r.status().is_success() => {
-                match r.bytes().await {
-                    Ok(b) => match fs::write(&out, b).await {
-                        Ok(_) => return ok_json(json!({"ok":true})),
-                        Err(e) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-                    },
-                    Err(e) => {
-                        last_err = e.to_string();
+                // 流式写入：边从远程接收边写磁盘，不把整个文件载入内存
+                // 对齐 Go 版 io.Copy(f, resp.Body)
+                match tokio::fs::File::create(&out).await {
+                    Err(e) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+                    Ok(mut file) => {
+                        let mut stream = r.bytes_stream();
+                        let mut ok = true;
+                        while let Some(chunk) = stream.next().await {
+                            match chunk {
+                                Ok(bytes) => {
+                                    if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut file, &bytes).await {
+                                        last_err = e.to_string();
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    last_err = e.to_string();
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if ok {
+                            return ok_json(json!({"ok":true}));
+                        }
+                        // 下载失败，删除不完整的文件
+                        let _ = tokio::fs::remove_file(&out).await;
                     }
                 }
             }
