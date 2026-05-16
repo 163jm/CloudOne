@@ -41,6 +41,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
 use tar::{Archive as TarArchive, Builder as TarBuilder};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use tokio::{
     fs,
@@ -1662,7 +1663,7 @@ async fn compress_files(
     }
 
     let out_clone = out.clone();
-    let result: Result<()> = tokio::task::spawn_blocking(move || -> Result<()> {
+    let join_result = tokio::task::spawn_blocking(move || -> Result<()> {
         let file = std::fs::File::create(&out_abs)?;
         match fmt {
             "zip" => {
@@ -1693,7 +1694,11 @@ async fn compress_files(
             }
         }
         Ok(())
-    }).await.map_err(|e| anyhow!(e))?;
+    });
+    let result = match join_result.await {
+        Ok(r) => r,
+        Err(e) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, anyhow!(e)),
+    };
 
     match result {
         Ok(_) => ok_json(json!({"ok":true,"output":out_clone})),
@@ -1805,7 +1810,7 @@ async fn decompress_file(
         Ok(())
     }
 
-    let result: Result<()> = tokio::task::spawn_blocking(move || -> Result<()> {
+    let result_join = tokio::task::spawn_blocking(move || -> Result<()> {
         std::fs::create_dir_all(&dest)?;
         if name.ends_with(".zip") {
             let f = std::fs::File::open(&abs)?;
@@ -1849,7 +1854,11 @@ async fn decompress_file(
             return Err(anyhow!("unsupported archive format"));
         }
         Ok(())
-    }).await.map_err(|e| anyhow!(e))?.map_err(|e| anyhow!(e));
+    });
+    let result: Result<()> = match result_join.await {
+        Ok(r) => r.map_err(|e| anyhow!(e)),
+        Err(e) => Err(anyhow!(e)),
+    };
 
     match result {
         Ok(_) => ok_json(json!({"ok":true})),
