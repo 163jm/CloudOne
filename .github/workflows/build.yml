@@ -56,15 +56,16 @@ jobs:
         run: cargo build --release --target x86_64-unknown-linux-musl
 
       - name: Build for Linux arm64 (musl static)
-        run: |
-          # 清理宿主机编译的 build-script artifacts，避免 GLIBC 版本冲突
-          rm -rf target/release/build target/debug/build
-          cross build --release --target aarch64-unknown-linux-musl
+        env:
+          # 使用独立的 target 目录，与 amd64 构建产物完全隔离
+          # 避免 proc-macro .so / build-script 二进制的 GLIBC 版本冲突
+          CARGO_TARGET_DIR: target-arm64
+        run: cross build --release --target aarch64-unknown-linux-musl
 
       - name: Prepare release binaries
         run: |
           cp target/x86_64-unknown-linux-musl/release/cloudone cloudone-linux-amd64
-          cp target/aarch64-unknown-linux-musl/release/cloudone cloudone-linux-arm64
+          cp target-arm64/aarch64-unknown-linux-musl/release/cloudone cloudone-linux-arm64
           chmod +x cloudone-linux-amd64 cloudone-linux-arm64
 
       - name: Upload artifacts
