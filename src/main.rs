@@ -42,10 +42,9 @@ use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
 use tar::{Archive as TarArchive, Builder as TarBuilder};
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::process::CommandExt;
 use tokio::{
     fs,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io,
     net::TcpListener,
     process::Command,
     sync::Mutex,
@@ -1724,7 +1723,7 @@ fn zip_add_lstat<W: Write + std::io::Seek>(
     } else if info.is_file() {
         let opts = SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
-            .unix_permissions(info.permissions().mode() as u16);
+            .unix_permissions(info.permissions().mode());
         zw.start_file(name, opts)?;
         let mut f = std::fs::File::open(abs)?;
         std::io::copy(&mut f, zw)?;
